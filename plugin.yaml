@@ -1,0 +1,10 @@
+name: sam_mesh
+title: A0 SAM Mesh Embassy
+description: Governed SAM tools, mesh inference, and optional sovereign Agent Zero service publication.
+version: 1.0.0
+settings_sections:
+  - mcp
+  - external
+per_project_config: true
+per_agent_config: true
+always_enabled: false

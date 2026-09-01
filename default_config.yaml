@@ -1,0 +1,33 @@
+schema: a0.sam.config/v1alpha1
+transport:
+  type: uds
+  base_url: http://127.0.0.1:8080
+  socket_path: /var/run/sam/node.sock
+  token_secret_name: ""
+  token_file: ""
+passport:
+  schema: a0.sam.passport/v1alpha1
+  mode: explorer
+  outbound:
+    max_data_class: public
+    allow_services: []
+    deny_tools: ["*"]
+    remote_mutations: deny
+  inference:
+    enabled: false
+    route_mode: automatic
+    required_labels: []
+    sensitive_data: deny
+  limits:
+    calls_per_session: 0
+    discovery_timeout_seconds: 30
+    timeout_seconds: 90
+    approval_lease_minutes: 15
+  inbound:
+    enabled: false
+    services: []
+features:
+  remote_calls: false
+  mesh_inference: false
+  inbound_publication: false
+  raw_mcp: false
