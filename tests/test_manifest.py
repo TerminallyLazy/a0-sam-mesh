@@ -2,6 +2,7 @@ from pathlib import Path
 
 import yaml
 
+import tests.conftest as fixture_support
 from tests.conftest import PLUGIN_ROOT, _install_plugin
 
 
@@ -105,3 +106,55 @@ def test_a0_checkout_fixture_yields_installed_checkout_and_cleans_up(
 
     assert not plugin_path.exists()
     assert not plugin_path.is_symlink()
+
+
+def test_plugin_pin_failure_removes_only_fixture_link(tmp_path: Path, monkeypatch):
+    checkout = _fake_a0_checkout(tmp_path)
+    plugin_path = checkout / "usr" / "plugins" / "sam_mesh"
+
+    def fail_pin(path):
+        pin_path = Path(path)
+        assert not plugin_path.exists()
+        assert pin_path.parent.parent == plugin_path.parent
+        assert pin_path.parent.name.startswith(".sam_mesh-install-")
+        raise OSError("forced pin failure")
+
+    monkeypatch.setattr(fixture_support, "_pin_plugin_link", fail_pin)
+    try:
+        with _install_plugin(checkout):
+            raise AssertionError("installation continued after pin failure")
+    except OSError as exc:
+        assert str(exc) == "forced pin failure"
+    else:
+        raise AssertionError("pin failure was not propagated")
+
+    assert not plugin_path.exists()
+    assert not plugin_path.is_symlink()
+    assert list(plugin_path.parent.iterdir()) == []
+
+
+def test_plugin_pin_failure_preserves_concurrent_substitution(tmp_path: Path, monkeypatch):
+    checkout = _fake_a0_checkout(tmp_path)
+    plugin_path = checkout / "usr" / "plugins" / "sam_mesh"
+    replacement = tmp_path / "replacement-after-pin-failure"
+    replacement.mkdir()
+
+    def substitute_then_fail(path):
+        pin_path = Path(path)
+        assert not plugin_path.exists()
+        assert pin_path.parent.parent == plugin_path.parent
+        plugin_path.symlink_to(replacement, target_is_directory=True)
+        raise OSError("forced pin failure after substitution")
+
+    monkeypatch.setattr(fixture_support, "_pin_plugin_link", substitute_then_fail)
+    try:
+        with _install_plugin(checkout):
+            raise AssertionError("installation continued after pin failure")
+    except OSError as exc:
+        assert str(exc) == "forced pin failure after substitution"
+    else:
+        raise AssertionError("pin failure was not propagated")
+
+    assert plugin_path.is_symlink()
+    assert plugin_path.resolve() == replacement.resolve()
+    assert list(plugin_path.parent.iterdir()) == [plugin_path]

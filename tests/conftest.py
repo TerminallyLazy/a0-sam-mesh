@@ -1,4 +1,5 @@
 import os
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -7,6 +8,11 @@ import pytest
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _pin_plugin_link(path: Path) -> int:
+    """Open a non-following descriptor that pins a staged symlink inode."""
+    return os.open(path, os.O_PATH | os.O_NOFOLLOW)
 
 
 def _resolve_a0_checkout() -> Path:
@@ -28,29 +34,42 @@ def _install_plugin(checkout: Path) -> Iterator[Path]:
     plugins_dir.mkdir(parents=True, exist_ok=True)
     plugin_link = plugins_dir / "sam_mesh"
 
+    owned_link_fd: int | None = None
+    published = False
     try:
-        plugin_link.symlink_to(PLUGIN_ROOT, target_is_directory=True)
-    except FileExistsError as exc:
-        raise RuntimeError(f"Refusing to replace existing plugin path: {plugin_link}") from exc
+        with tempfile.TemporaryDirectory(
+            prefix=".sam_mesh-install-", dir=plugins_dir
+        ) as staging_dir:
+            staged_link = Path(staging_dir) / "sam_mesh"
+            staged_link.symlink_to(PLUGIN_ROOT, target_is_directory=True)
+            owned_link_fd = _pin_plugin_link(staged_link)
+            try:
+                os.link(staged_link, plugin_link, follow_symlinks=False)
+            except FileExistsError as exc:
+                raise RuntimeError(
+                    f"Refusing to replace existing plugin path: {plugin_link}"
+                ) from exc
+            published = True
 
-    owned_link_fd = os.open(plugin_link, os.O_PATH | os.O_NOFOLLOW)
-    try:
         yield checkout
     finally:
-        try:
-            current_link = plugin_link.lstat()
-        except FileNotFoundError:
-            pass
-        else:
-            owned_link = os.fstat(owned_link_fd)
-            if (
-                plugin_link.is_symlink()
-                and current_link.st_dev == owned_link.st_dev
-                and current_link.st_ino == owned_link.st_ino
-            ):
-                plugin_link.unlink()
-        finally:
-            os.close(owned_link_fd)
+        if owned_link_fd is not None:
+            try:
+                if published:
+                    try:
+                        current_link = plugin_link.lstat()
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        owned_link = os.fstat(owned_link_fd)
+                        if (
+                            plugin_link.is_symlink()
+                            and current_link.st_dev == owned_link.st_dev
+                            and current_link.st_ino == owned_link.st_ino
+                        ):
+                            plugin_link.unlink()
+            finally:
+                os.close(owned_link_fd)
 
 
 @pytest.fixture(scope="session")
