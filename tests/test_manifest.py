@@ -158,3 +158,35 @@ def test_plugin_pin_failure_preserves_concurrent_substitution(tmp_path: Path, mo
     assert plugin_path.is_symlink()
     assert plugin_path.resolve() == replacement.resolve()
     assert list(plugin_path.parent.iterdir()) == [plugin_path]
+
+
+def test_publish_uses_pinned_inode_if_staged_path_is_replaced(
+    tmp_path: Path, monkeypatch
+):
+    checkout = _fake_a0_checkout(tmp_path)
+    plugin_path = checkout / "usr" / "plugins" / "sam_mesh"
+    replacement = tmp_path / "staged-path-substitution"
+    replacement.mkdir()
+    publish_pinned = fixture_support._publish_plugin_link
+
+    def substitute_staged_path_then_publish(owned_link_fd, destination):
+        staging_dirs = list(plugin_path.parent.glob(".sam_mesh-install-*"))
+        assert len(staging_dirs) == 1
+        staged_link = staging_dirs[0] / "sam_mesh"
+        staged_link.unlink()
+        staged_link.symlink_to(replacement, target_is_directory=True)
+        publish_pinned(owned_link_fd, destination)
+
+    monkeypatch.setattr(
+        fixture_support,
+        "_publish_plugin_link",
+        substitute_staged_path_then_publish,
+    )
+    with _install_plugin(checkout):
+        assert plugin_path.is_symlink()
+        assert plugin_path.resolve() == PLUGIN_ROOT
+        assert plugin_path.resolve() != replacement.resolve()
+
+    assert not plugin_path.exists()
+    assert not plugin_path.is_symlink()
+    assert list(plugin_path.parent.iterdir()) == []

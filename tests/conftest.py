@@ -1,3 +1,5 @@
+import ctypes
+import errno
 import os
 import tempfile
 from contextlib import contextmanager
@@ -8,11 +10,41 @@ import pytest
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+_AT_FDCWD = -100
+_AT_EMPTY_PATH = 0x1000
+_LIBC = ctypes.CDLL(None, use_errno=True)
+_LINKAT = _LIBC.linkat
+_LINKAT.argtypes = [
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_int,
+]
+_LINKAT.restype = ctypes.c_int
 
 
 def _pin_plugin_link(path: Path) -> int:
     """Open a non-following descriptor that pins a staged symlink inode."""
     return os.open(path, os.O_PATH | os.O_NOFOLLOW)
+
+
+def _publish_plugin_link(owned_link_fd: int, destination: Path) -> None:
+    """Atomically publish the pinned inode without replacing an existing path."""
+    ctypes.set_errno(0)
+    result = _LINKAT(
+        owned_link_fd,
+        b"",
+        _AT_FDCWD,
+        os.fsencode(destination),
+        _AT_EMPTY_PATH,
+    )
+    if result == 0:
+        return
+
+    error_number = ctypes.get_errno()
+    error_type = FileExistsError if error_number == errno.EEXIST else OSError
+    raise error_type(error_number, os.strerror(error_number), destination)
 
 
 def _resolve_a0_checkout() -> Path:
@@ -42,9 +74,11 @@ def _install_plugin(checkout: Path) -> Iterator[Path]:
         ) as staging_dir:
             staged_link = Path(staging_dir) / "sam_mesh"
             staged_link.symlink_to(PLUGIN_ROOT, target_is_directory=True)
-            owned_link_fd = _pin_plugin_link(staged_link)
+            owned_anchor = Path(staging_dir) / ".owned-sam_mesh"
+            os.link(staged_link, owned_anchor, follow_symlinks=False)
+            owned_link_fd = _pin_plugin_link(owned_anchor)
             try:
-                os.link(staged_link, plugin_link, follow_symlinks=False)
+                _publish_plugin_link(owned_link_fd, plugin_link)
             except FileExistsError as exc:
                 raise RuntimeError(
                     f"Refusing to replace existing plugin path: {plugin_link}"
