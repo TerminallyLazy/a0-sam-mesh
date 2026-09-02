@@ -214,6 +214,7 @@ class ToolDescriptor:
     discovered_at: str
     discovery_source: str
     schema_hash: str
+    annotations: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         input_schema = _freeze_json(self.input_schema, "input_schema")
@@ -226,11 +227,15 @@ class ToolDescriptor:
         )
         if output_schema is not None and not isinstance(output_schema, Mapping):
             raise TypeError("output_schema must be a JSON object or null")
+        annotations = _freeze_json(self.annotations, "annotations")
+        if not isinstance(annotations, Mapping):
+            raise TypeError("annotations must be a JSON object")
         expected_hash = _tool_schema_hash(input_schema, output_schema)
         if self.schema_hash != expected_hash:
             raise ValueError("schema_hash does not match the canonical frozen schemas")
         object.__setattr__(self, "input_schema", input_schema)
         object.__setattr__(self, "output_schema", output_schema)
+        object.__setattr__(self, "annotations", annotations)
 
 
 @dataclass(frozen=True)
