@@ -186,6 +186,7 @@ class ConfigValidationTests(unittest.TestCase):
         manager.assert_called_once_with(agent.context)
         project.assert_called_once_with(agent.context)
         self.assertEqual(cfg.transport.token, "resolved-in-memory-token")
+        self.assertNotIn("resolved-in-memory-token", repr(cfg))
         self.assertEqual(
             cfg.scope,
             Scope(

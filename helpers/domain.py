@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal, Mapping
 
@@ -62,7 +62,7 @@ class TransportConfig:
     type: Literal["http", "uds"]
     base_url: str
     socket_path: str | None
-    token: str | None
+    token: str | None = field(repr=False)
 
 
 @dataclass(frozen=True)
