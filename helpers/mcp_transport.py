@@ -17,6 +17,7 @@ from .domain import TransportConfig
 
 MCP_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_PROTOCOL_VERSIONS = frozenset({MCP_PROTOCOL_VERSION})
 Resolver = Callable[..., Awaitable[list[tuple[Any, ...]]]]
 
 
@@ -41,7 +42,24 @@ class SamNodeNotReady(SamError):
 
 
 class SamConnectivityError(SamError):
-    """SAM could not be reached or ended the response unexpectedly."""
+    """SAM connectivity failed with explicit dispatch-phase evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        phase: str = "transport",
+        dispatched: bool | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.phase = phase
+        self.dispatched = dispatched
+
+
+class SamCallAmbiguous(SamConnectivityError):
+    """A tools/call may have executed before its response was lost."""
+
+    duplicate_execution_possible = True
 
 
 class SamSchemaError(SamError):
@@ -140,7 +158,10 @@ async def validate_tcp_origin(
             address = ipaddress.ip_address(raw_address)
         except (IndexError, TypeError, ValueError) as exc:
             raise SamConnectivityError("SAM TCP host returned an invalid address") from exc
-        if _address_is_forbidden(address):
+        nonlocal_hostname = literal is None and host.lower() != "localhost"
+        if _address_is_forbidden(address) or (
+            nonlocal_hostname and address.is_loopback
+        ):
             raise SamConnectivityError("SAM TCP host resolved to a forbidden address class")
         rendered = str(address)
         if rendered not in addresses:
@@ -280,6 +301,7 @@ class McpStreamableSession:
         json_body: Any = None,
         headers: Mapping[str, str] | None = None,
         allow_empty: bool = False,
+        ambiguous_tool_call: bool = False,
     ) -> tuple[httpx.Response, list[Any]]:
         await self._validate_destination()
         request_headers = dict(headers or {})
@@ -301,7 +323,17 @@ class McpStreamableSession:
         except SamError:
             raise
         except (httpx.TimeoutException, httpx.TransportError, EOFError, OSError) as exc:
-            raise SamConnectivityError("SAM transport failed") from exc
+            if ambiguous_tool_call:
+                raise SamCallAmbiguous(
+                    "SAM tools/call outcome is ambiguous after transport failure",
+                    phase="dispatch_or_response",
+                    dispatched=None,
+                ) from exc
+            raise SamConnectivityError(
+                "SAM transport failed",
+                phase="transport",
+                dispatched=None,
+            ) from exc
 
         if 300 <= response.status_code < 400:
             raise SamSchemaError("SAM redirect was rejected")
@@ -336,10 +368,32 @@ class McpStreamableSession:
             raise SamSchemaError("SAM JSON endpoint returned multiple payloads")
         return values[0]
 
+    @staticmethod
+    def _validate_initialize_result(result: Mapping[str, Any]) -> str:
+        protocol = result.get("protocolVersion")
+        capabilities = result.get("capabilities")
+        server_info = result.get("serverInfo")
+        instructions = result.get("instructions", "")
+        if protocol not in MCP_PROTOCOL_VERSIONS:
+            raise SamSchemaError("MCP initialize negotiated an unsupported protocol version")
+        if not isinstance(capabilities, Mapping):
+            raise SamSchemaError("MCP initialize capabilities must be an object")
+        if not isinstance(server_info, Mapping):
+            raise SamSchemaError("MCP initialize serverInfo must be an object")
+        for field in ("name", "version"):
+            value = server_info.get(field)
+            if not isinstance(value, str) or not value:
+                raise SamSchemaError(
+                    f"MCP initialize serverInfo.{field} must be a nonempty string"
+                )
+        if not isinstance(instructions, str):
+            raise SamSchemaError("MCP initialize instructions must be a string")
+        return protocol
+
     async def initialize(self) -> dict[str, Any]:
         if self._session_id is not None:
             raise SamSchemaError("MCP session is already initialized")
-        result = await self.request(
+        result, response = await self._request(
             "initialize",
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -348,9 +402,31 @@ class McpStreamableSession:
             },
             include_session=False,
         )
-        if self._session_id is None:
+        session_id = response.headers.get("mcp-session-id")
+        protocol = self._validate_initialize_result(result)
+        response_protocol = response.headers.get("mcp-protocol-version")
+        if not session_id:
             raise SamSchemaError("MCP initialize omitted Mcp-Session-Id")
-        await self.notification("notifications/initialized", {})
+        if response_protocol is not None and response_protocol != protocol:
+            raise SamSchemaError("MCP initialize returned conflicting protocol versions")
+
+        staged_headers = {
+            "Mcp-Session-Id": session_id,
+            "Mcp-Protocol-Version": protocol,
+        }
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }
+        await self._send(
+            "POST",
+            "/mcp",
+            json_body=payload,
+            headers=staged_headers,
+            allow_empty=True,
+        )
+        self._session_id, self._protocol_version = session_id, protocol
         return result
 
     async def notification(self, method: str, params: dict[str, Any]) -> None:
@@ -371,13 +447,43 @@ class McpStreamableSession:
             headers["Mcp-Protocol-Version"] = self._protocol_version
         return headers
 
-    async def request(
+    @staticmethod
+    def _matching_message(values: list[Any], request_id: int) -> Mapping[str, Any]:
+        matching: list[Mapping[str, Any]] = []
+        for value in values:
+            if not isinstance(value, Mapping):
+                continue
+            response_id = value.get("id")
+            if response_id == request_id and type(response_id) is not type(request_id):
+                raise SamSchemaError("MCP response id used an invalid type alias")
+            if type(response_id) is type(request_id) and response_id == request_id:
+                matching.append(value)
+        if len(matching) != 1:
+            raise SamSchemaError(
+                "MCP response did not contain exactly one matching request id"
+            )
+        return matching[0]
+
+    @staticmethod
+    def _validate_error(error: Any) -> Mapping[str, Any]:
+        if not isinstance(error, Mapping):
+            raise SamSchemaError("MCP error must be an object")
+        code = error.get("code")
+        message = error.get("message")
+        valid_code = (
+            isinstance(code, str) and bool(code)
+        ) or (isinstance(code, int) and not isinstance(code, bool))
+        if not valid_code or not isinstance(message, str) or not message:
+            raise SamSchemaError("MCP error must contain a valid code and message")
+        return error
+
+    async def _request(
         self,
         method: str,
         params: dict[str, Any],
         *,
         include_session: bool = True,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], httpx.Response]:
         request_id = self._next_id
         self._next_id += 1
         payload = {
@@ -391,41 +497,40 @@ class McpStreamableSession:
             "/mcp",
             json_body=payload,
             headers=self._session_headers() if include_session else {},
+            ambiguous_tool_call=method == "tools/call",
         )
-        if method == "initialize":
-            session_id = response.headers.get("mcp-session-id")
-            if not session_id:
-                raise SamSchemaError("MCP initialize omitted Mcp-Session-Id")
-            self._session_id = session_id
-
-        matching = [
-            value
-            for value in values
-            if isinstance(value, Mapping) and value.get("id") == request_id
-        ]
-        if len(matching) != 1:
-            raise SamSchemaError("MCP response did not contain exactly one matching request id")
-        message = matching[0]
+        message = self._matching_message(values, request_id)
         if message.get("jsonrpc") != "2.0":
             raise SamSchemaError("MCP response has an invalid JSON-RPC version")
-        if "error" in message:
-            if _machine_policy_denial(message):
+        has_result = "result" in message
+        has_error = "error" in message
+        if has_result == has_error:
+            raise SamSchemaError("MCP response must contain exactly one result or error")
+        if has_error:
+            error = self._validate_error(message["error"])
+            if _machine_policy_denial({"error": error}):
                 raise SamPolicyDenied("SAM policy denied the MCP request")
-            error = message.get("error")
-            code = error.get("code") if isinstance(error, Mapping) else None
-            raise SamProviderError(f"SAM MCP request failed with code {code!r}")
-        result = message.get("result")
+            raise SamProviderError(
+                f"SAM MCP request failed with code {error['code']!r}"
+            )
+        result = message["result"]
         if not isinstance(result, Mapping):
             raise SamSchemaError("MCP response result must be an object")
-        if method == "initialize":
-            protocol = result.get("protocolVersion")
-            if not isinstance(protocol, str) or not protocol:
-                raise SamSchemaError("MCP initialize omitted the negotiated protocol version")
-            response_protocol = response.headers.get("mcp-protocol-version")
-            if response_protocol is not None and response_protocol != protocol:
-                raise SamSchemaError("MCP initialize returned conflicting protocol versions")
-            self._protocol_version = protocol
-        return dict(result)
+        return dict(result), response
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        include_session: bool = True,
+    ) -> dict[str, Any]:
+        result, _ = await self._request(
+            method,
+            params,
+            include_session=include_session,
+        )
+        return result
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(arguments, dict):

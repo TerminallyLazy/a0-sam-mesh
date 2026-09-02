@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
+from urllib.parse import urlsplit
 
-from .domain import MeshModel, ProbeStatus, ToolDescriptor
+from .domain import MeshModel, ProbeStatus
 from .mcp_transport import (
     SamConnectivityError,
     SamError,
     SamProviderError,
     SamSchemaError,
 )
-from .sam_client import McpCapabilities, SamClient
+from .sam_client import McpCapabilities, McpTool, SamClient
 
 EXPECTED_READ_TOOL_SCHEMAS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
     {
@@ -43,6 +46,19 @@ EXPECTED_READ_TOOL_SCHEMAS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
         },
     }
 )
+CALL_REMOTE_TOOL_SCHEMA: Mapping[str, Any] = MappingProxyType(
+    {
+        "properties": MappingProxyType(
+            {
+                "peer_id": "string",
+                "tool_name": "string",
+                "arguments": "object",
+                "required_labels": "string",
+            }
+        ),
+        "required": ("peer_id", "tool_name"),
+    }
+)
 REMOVED_DIAGNOSTIC_TOOLS = (
     "check_connectivity",
     "get_token_info",
@@ -65,6 +81,23 @@ _KNOWN_CURRENT_TOOLS = frozenset(
 )
 
 
+def _freeze_json(value: Any, path: str) -> Any:
+    if isinstance(value, Mapping):
+        frozen: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise SamSchemaError(f"{path} must contain string object keys")
+            frozen[key] = _freeze_json(item, f"{path}.{key}")
+        return MappingProxyType(frozen)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item, f"{path}[]") for item in value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    raise SamSchemaError(f"{path} must contain finite JSON values")
+
+
 @dataclass(frozen=True)
 class FeatureProbe:
     status: ProbeStatus
@@ -78,14 +111,30 @@ class CompatibilityReport:
     server_version: str | None
     protocol_version: str | None
     features: Mapping[str, FeatureProbe]
-    observed_tools: tuple[ToolDescriptor, ...]
+    observed_tools: tuple[McpTool, ...]
     observed_disabled_tools: tuple[str, ...]
     extra_tools: tuple[str, ...]
     enabled_tools: tuple[str, ...]
     models: tuple[MeshModel, ...]
+    call_remote_tool_schema_compatible: bool
     call_remote_tool_invocation_enabled: bool
     mesh_ready: bool
     node_metadata: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        features = MappingProxyType(dict(self.features))
+        metadata = _freeze_json(self.node_metadata, "node metadata")
+        object.__setattr__(self, "features", features)
+        object.__setattr__(self, "node_metadata", metadata)
+        object.__setattr__(self, "observed_tools", tuple(self.observed_tools))
+        object.__setattr__(
+            self,
+            "observed_disabled_tools",
+            tuple(self.observed_disabled_tools),
+        )
+        object.__setattr__(self, "extra_tools", tuple(self.extra_tools))
+        object.__setattr__(self, "enabled_tools", tuple(self.enabled_tools))
+        object.__setattr__(self, "models", tuple(self.models))
 
 
 def compatibility_status(value: str) -> ProbeStatus:
@@ -115,7 +164,7 @@ def _schema_matches(schema: Mapping[str, Any], expected: Mapping[str, Any]) -> b
         isinstance(item, str) for item in required
     ):
         return False
-    if set(required) != set(expected["required"]):
+    if len(required) != len(set(required)) or set(required) != set(expected["required"]):
         return False
     expected_properties = expected["properties"]
     if set(properties) != set(expected_properties):
@@ -124,27 +173,36 @@ def _schema_matches(schema: Mapping[str, Any], expected: Mapping[str, Any]) -> b
         value = properties.get(name)
         if not isinstance(value, Mapping) or value.get("type") != expected_type:
             return False
-    return True
+    additional = schema.get("additionalProperties")
+    return additional is None or additional is False
 
 
-def _call_schema_matches(schema: Mapping[str, Any]) -> bool:
-    if schema.get("type") != "object":
-        return False
-    properties = schema.get("properties")
-    if not isinstance(properties, Mapping):
-        return False
-    arguments = properties.get("arguments")
-    labels = properties.get("required_labels")
-    return (
-        isinstance(arguments, Mapping)
-        and arguments.get("type") == "object"
-        and isinstance(labels, Mapping)
-        and labels.get("type") == "string"
-    )
+def _tool_probe_name(tool: McpTool) -> str:
+    if tool.canonical_uri is None:
+        return tool.wire_name
+    parsed = urlsplit(tool.canonical_uri)
+    return parsed.path.rstrip("/").rsplit("/", 1)[-1]
 
 
-def _aggregate_status(features: Mapping[str, FeatureProbe]) -> ProbeStatus:
-    statuses = {feature.status for feature in features.values()}
+def _index_tools(tools: list[McpTool]) -> tuple[dict[str, McpTool], set[str]]:
+    indexed: dict[str, McpTool] = {}
+    duplicates: set[str] = set()
+    for tool in tools:
+        name = _tool_probe_name(tool)
+        if name in indexed:
+            duplicates.add(name)
+        else:
+            indexed[name] = tool
+    for name in duplicates:
+        indexed.pop(name, None)
+    return indexed, duplicates
+
+
+def _aggregate_status(
+    features: Mapping[str, FeatureProbe],
+    required_features: tuple[str, ...],
+) -> ProbeStatus:
+    statuses = {features[name].status for name in required_features}
     if statuses == {ProbeStatus.VERIFIED_NOW}:
         return ProbeStatus.VERIFIED_NOW
     if statuses == {ProbeStatus.UNREACHABLE}:
@@ -164,13 +222,13 @@ class CapabilityProbe:
         features: dict[str, FeatureProbe] = {}
         metadata: dict[str, Any] = {}
         capabilities: McpCapabilities | None = None
-        tools: tuple[ToolDescriptor, ...] = ()
-        models: tuple[MeshModel, ...] = ()
+        tools: list[McpTool] = []
+        models: list[MeshModel] = []
         mesh_ready = False
 
         try:
             health = await self._client.health()
-            metadata["healthz"] = dict(health.payload)
+            metadata["healthz"] = health.payload
             features["healthz"] = FeatureProbe(
                 ProbeStatus.VERIFIED_NOW if health.ready else ProbeStatus.PARTIAL
             )
@@ -179,7 +237,7 @@ class CapabilityProbe:
 
         try:
             readiness = await self._client.readiness()
-            metadata["readyz"] = dict(readiness.payload)
+            metadata["readyz"] = readiness.payload
             features["readyz"] = FeatureProbe(
                 ProbeStatus.VERIFIED_NOW if readiness.ready else ProbeStatus.PARTIAL
             )
@@ -200,12 +258,13 @@ class CapabilityProbe:
             except SamError as exc:
                 features["tools_list"] = self._failed_probe(exc)
         else:
+            dependency = features["mcp_initialize"]
             features["tools_list"] = FeatureProbe(
-                ProbeStatus.UNREACHABLE,
-                "tools/list requires a successful MCP initialization",
+                dependency.status,
+                f"depends on initialize: {dependency.detail}",
             )
 
-        by_name = {tool.canonical_uri.rsplit("/", 1)[-1]: tool for tool in tools}
+        by_name, duplicate_names = _index_tools(tools)
         tools_list_status = features["tools_list"].status
         missing_tool_status = (
             ProbeStatus.UNSUPPORTED
@@ -213,63 +272,86 @@ class CapabilityProbe:
             else tools_list_status
         )
         enabled_tools: list[str] = []
+        required_feature_names = ["healthz", "readyz", "mcp_initialize", "tools_list"]
         for name, expected_schema in EXPECTED_READ_TOOL_SCHEMAS.items():
+            feature_name = f"tool:{name}"
+            required_feature_names.append(feature_name)
             descriptor = by_name.get(name)
-            if descriptor is None:
-                features[f"tool:{name}"] = FeatureProbe(missing_tool_status)
+            if name in duplicate_names:
+                features[feature_name] = FeatureProbe(
+                    ProbeStatus.SCHEMA_CHANGED,
+                    "multiple tools resolve to the same probe name",
+                )
+            elif descriptor is None:
+                features[feature_name] = FeatureProbe(missing_tool_status)
             elif _schema_matches(descriptor.input_schema, expected_schema):
-                features[f"tool:{name}"] = FeatureProbe(ProbeStatus.VERIFIED_NOW)
+                features[feature_name] = FeatureProbe(ProbeStatus.VERIFIED_NOW)
                 enabled_tools.append(name)
             else:
-                features[f"tool:{name}"] = FeatureProbe(ProbeStatus.SCHEMA_CHANGED)
+                features[feature_name] = FeatureProbe(ProbeStatus.SCHEMA_CHANGED)
 
         for name in REMOVED_DIAGNOSTIC_TOOLS:
             observed = name in by_name
             if observed:
                 status = ProbeStatus.UNSUPPORTED
                 detail = "legacy diagnostic observed but disabled as a model tool"
+            elif tools_list_status is ProbeStatus.VERIFIED_NOW:
+                status = ProbeStatus.UNSUPPORTED
+                detail = "diagnostic is absent and unsupported"
             else:
-                status = missing_tool_status
-                detail = (
-                    "diagnostic is absent and unsupported"
-                    if status is ProbeStatus.UNSUPPORTED
-                    else "diagnostic availability could not be observed"
-                )
+                status = tools_list_status
+                detail = "diagnostic availability could not be observed"
             features[f"tool:{name}"] = FeatureProbe(status, detail)
 
         call_descriptor = by_name.get("call_remote_tool")
-        call_enabled = False
-        if call_descriptor is None:
-            features["tool:call_remote_tool"] = FeatureProbe(missing_tool_status)
-        elif _call_schema_matches(call_descriptor.input_schema):
-            features["tool:call_remote_tool"] = FeatureProbe(ProbeStatus.VERIFIED_NOW)
-            call_enabled = True
+        call_compatible = False
+        call_feature = "tool:call_remote_tool"
+        required_feature_names.append(call_feature)
+        if "call_remote_tool" in duplicate_names:
+            features[call_feature] = FeatureProbe(
+                ProbeStatus.SCHEMA_CHANGED,
+                "multiple call_remote_tool identities were observed",
+            )
+        elif call_descriptor is None:
+            features[call_feature] = FeatureProbe(missing_tool_status)
+        elif _schema_matches(call_descriptor.input_schema, CALL_REMOTE_TOOL_SCHEMA):
+            features[call_feature] = FeatureProbe(ProbeStatus.VERIFIED_NOW)
+            call_compatible = True
         else:
-            features["tool:call_remote_tool"] = FeatureProbe(ProbeStatus.SCHEMA_CHANGED)
+            features[call_feature] = FeatureProbe(ProbeStatus.SCHEMA_CHANGED)
 
         try:
             models = await self._client.list_models()
             features["models"] = FeatureProbe(ProbeStatus.VERIFIED_NOW)
         except SamError as exc:
             features["models"] = self._failed_probe(exc)
+        required_feature_names.append("models")
 
-        observed_names = tuple(by_name)
-        observed_disabled = tuple(name for name in observed_names if name not in enabled_tools)
-        extra_tools = tuple(name for name in observed_names if name not in _KNOWN_CURRENT_TOOLS)
+        observed_disabled = tuple(
+            tool.wire_name
+            for tool in tools
+            if _tool_probe_name(tool) not in enabled_tools
+        )
+        extra_tools = tuple(
+            tool.wire_name
+            for tool in tools
+            if _tool_probe_name(tool) not in _KNOWN_CURRENT_TOOLS
+        )
         return CompatibilityReport(
-            status=_aggregate_status(features),
+            status=_aggregate_status(features, tuple(required_feature_names)),
             server_name=None if capabilities is None else capabilities.server_name,
             server_version=None if capabilities is None else capabilities.server_version,
             protocol_version=None if capabilities is None else capabilities.protocol_version,
-            features=MappingProxyType(features),
+            features=features,
             observed_tools=tuple(tools),
             observed_disabled_tools=observed_disabled,
             extra_tools=extra_tools,
             enabled_tools=tuple(enabled_tools),
             models=tuple(models),
-            call_remote_tool_invocation_enabled=call_enabled,
+            call_remote_tool_schema_compatible=call_compatible,
+            call_remote_tool_invocation_enabled=False,
             mesh_ready=mesh_ready,
-            node_metadata=MappingProxyType(metadata),
+            node_metadata=metadata,
         )
 
     @staticmethod

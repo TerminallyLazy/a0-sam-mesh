@@ -205,6 +205,23 @@ class SamTransportTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(SamConnectivityError):
                     await client.health()
 
+    async def test_nonlocal_hostname_resolution_to_loopback_is_rejected(self):
+        from helpers.mcp_transport import SamConnectivityError, validate_tcp_origin
+
+        config = TransportConfig(
+            type="http",
+            base_url="https://sam.example:8443",
+            socket_path=None,
+            token=None,
+            allowed_origins=("https://sam.example:8443",),
+        )
+
+        async def loopback(*_args):
+            return [(0, 0, 0, "", ("127.0.0.1", 8443))]
+
+        with self.assertRaises(SamConnectivityError):
+            await validate_tcp_origin(config, resolver=loopback)
+
     async def test_tcp_resolution_rejects_forbidden_classes_and_origin_mismatch(self):
         from helpers.mcp_transport import SamConnectivityError, validate_tcp_origin
 
@@ -260,6 +277,187 @@ class SamTransportTests(unittest.IsolatedAsyncioTestCase):
             ) as client:
                 self.assertTrue((await client.health()).ready)
                 with self.assertRaises(SamConnectivityError):
+                    await client.health()
+
+
+
+
+class SamTransportFixRound1Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_initialize_rejects_bool_id_without_committing_session(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        body = (
+            b'{"jsonrpc":"2.0","id":true,"result":'
+            b'{"protocolVersion":"2025-03-26"}}'
+        )
+        headers = {
+            "Mcp-Session-Id": "must-not-commit",
+            "Mcp-Protocol-Version": "2025-03-26",
+        }
+        async with FakeSamSidecar() as sidecar:
+            sidecar.mcp_overrides["initialize"] = FakeResponse(
+                200,
+                body=body,
+                headers=headers,
+            )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                with self.assertRaises(SamSchemaError):
+                    await client.initialize_mcp()
+                self.assertIsNone(client.mcp.session_id)
+                self.assertIsNone(client.mcp.protocol_version)
+
+    async def test_initialize_failure_commits_no_partial_session_state(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        body = (
+            b'{"jsonrpc":"2.0","id":1,"result":'
+            b'{"protocolVersion":"2025-03-26"}}'
+        )
+        headers = {
+            "Mcp-Session-Id": "must-not-commit",
+            "Mcp-Protocol-Version": "different-version",
+        }
+        async with FakeSamSidecar() as sidecar:
+            sidecar.mcp_overrides["initialize"] = FakeResponse(
+                200,
+                body=body,
+                headers=headers,
+            )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                with self.assertRaises(SamSchemaError):
+                    await client.initialize_mcp()
+                self.assertIsNone(client.mcp.session_id)
+                self.assertIsNone(client.mcp.protocol_version)
+
+    async def test_initialize_validates_full_result_before_session_commit(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        body = (
+            b'{"jsonrpc":"2.0","id":1,"result":'
+            b'{"protocolVersion":"2025-03-26","capabilities":{},'
+            b'"serverInfo":{"name":"","version":"0.1.0"}}}'
+        )
+        headers = {"Mcp-Session-Id": "must-not-commit"}
+        async with FakeSamSidecar() as sidecar:
+            sidecar.mcp_overrides["initialize"] = FakeResponse(
+                200,
+                body=body,
+                headers=headers,
+            )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                with self.assertRaises(SamSchemaError):
+                    await client.initialize_mcp()
+                self.assertIsNone(client.mcp.session_id)
+                self.assertIsNone(client.mcp.protocol_version)
+
+    async def test_float_id_alias_is_rejected_even_with_exact_id_present(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        body = (
+            b'data: {"jsonrpc":"2.0","id":1.0,"result":{}}\n\n'
+            b'data: {"jsonrpc":"2.0","id":1,"result":'
+            b'{"protocolVersion":"2025-03-26","capabilities":{},'
+            b'"serverInfo":{"name":"sam-node-mcp","version":"0.1.0"}}}\n\n'
+        )
+        headers = {"Mcp-Session-Id": "must-not-commit"}
+        async with FakeSamSidecar() as sidecar:
+            sidecar.mcp_overrides["initialize"] = FakeResponse(
+                200,
+                content_type="text/event-stream",
+                body=body,
+                headers=headers,
+            )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                with self.assertRaises(SamSchemaError):
+                    await client.initialize_mcp()
+                self.assertIsNone(client.mcp.session_id)
+
+    async def test_initialize_rejects_unsupported_protocol_without_state(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        body = (
+            b'{"jsonrpc":"2.0","id":1,"result":'
+            b'{"protocolVersion":"2099-01-01","capabilities":{},'
+            b'"serverInfo":{"name":"sam-node-mcp","version":"0.1.0"}}}'
+        )
+        headers = {"Mcp-Session-Id": "must-not-commit"}
+        async with FakeSamSidecar() as sidecar:
+            sidecar.mcp_overrides["initialize"] = FakeResponse(
+                200,
+                body=body,
+                headers=headers,
+            )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                with self.assertRaises(SamSchemaError):
+                    await client.initialize_mcp()
+                self.assertIsNone(client.mcp.session_id)
+                self.assertIsNone(client.mcp.protocol_version)
+
+    async def test_malformed_json_rpc_error_is_schema_error(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        body = b'{"jsonrpc":"2.0","id":2,"error":{"code":false}}'
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                await client.initialize_mcp()
+                sidecar.mcp_overrides["tools/list"] = FakeResponse(200, body=body)
+                with self.assertRaises(SamSchemaError):
+                    await client.list_tools()
+
+    async def test_tool_response_loss_is_explicitly_ambiguous_and_not_replayed(self):
+        from helpers.mcp_transport import SamCallAmbiguous
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                await client.initialize_mcp()
+                sidecar.mcp_overrides["tools/call"] = FakeResponse(
+                    200,
+                    close_without_response=True,
+                )
+                with self.assertRaises(SamCallAmbiguous) as raised:
+                    await client.call_mcp_tool("get_mesh_info", {})
+        self.assertIsNone(raised.exception.dispatched)
+        self.assertTrue(raised.exception.duplicate_execution_possible)
+        self.assertEqual(raised.exception.phase, "dispatch_or_response")
+        self.assertEqual(sidecar.count_mcp_method("tools/call"), 1)
+
+    async def test_exact_four_mib_json_succeeds(self):
+        from helpers.mcp_transport import MCP_RESPONSE_MAX_BYTES
+        from helpers.sam_client import SamClient
+
+        prefix = b'{"ready":true,"padding":"'
+        suffix = b'"}'
+        body = prefix + b"x" * (MCP_RESPONSE_MAX_BYTES - len(prefix) - len(suffix)) + suffix
+        self.assertEqual(len(body), MCP_RESPONSE_MAX_BYTES)
+        async with FakeSamSidecar() as sidecar:
+            sidecar.override("/healthz", FakeResponse(200, body=body))
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                self.assertTrue((await client.health()).ready)
+
+    async def test_fragmented_sse_cumulative_overflow_is_rejected(self):
+        from helpers.mcp_transport import MCP_RESPONSE_MAX_BYTES, SamSchemaError
+        from helpers.sam_client import SamClient
+
+        body = b"data: " + b"x" * MCP_RESPONSE_MAX_BYTES + b"\n\n"
+        async with FakeSamSidecar() as sidecar:
+            sidecar.override(
+                "/healthz",
+                FakeResponse(
+                    200,
+                    content_type="text/event-stream",
+                    body=body,
+                    fragments=(1024,) * 4096,
+                ),
+            )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                with self.assertRaises(SamSchemaError):
                     await client.health()
 
 

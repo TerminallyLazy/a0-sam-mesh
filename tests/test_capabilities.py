@@ -27,7 +27,7 @@ class CapabilityProbeTests(unittest.IsolatedAsyncioTestCase):
                 report = await CapabilityProbe(client).probe()
 
         self.assertEqual(report.server_name, "sam-node-mcp")
-        self.assertEqual(report.status, ProbeStatus.PARTIAL)
+        self.assertEqual(report.status, ProbeStatus.VERIFIED_NOW)
         for name in (
             "get_mesh_info",
             "list_local_services",
@@ -42,7 +42,8 @@ class CapabilityProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report.observed_tools), 10)
         self.assertIn("send_message", report.observed_disabled_tools)
         self.assertIn("mesh_pubsub_broadcast", report.observed_disabled_tools)
-        self.assertTrue(report.call_remote_tool_invocation_enabled)
+        self.assertTrue(report.call_remote_tool_schema_compatible)
+        self.assertFalse(report.call_remote_tool_invocation_enabled)
 
     async def test_call_remote_tool_schema_change_disables_invocation(self):
         from helpers.capabilities import CapabilityProbe
@@ -62,7 +63,7 @@ class CapabilityProbeTests(unittest.IsolatedAsyncioTestCase):
         descriptor = next(
             tool
             for tool in report.observed_tools
-            if tool.canonical_uri.endswith("/call_remote_tool")
+            if tool.wire_name == "call_remote_tool"
         )
         self.assertEqual(
             descriptor.input_schema["properties"]["arguments"]["type"],
@@ -211,6 +212,172 @@ class CapabilityProbeTests(unittest.IsolatedAsyncioTestCase):
             ProbeStatus.UNSUPPORTED,
         )
         self.assertFalse(report.call_remote_tool_invocation_enabled)
+
+
+
+
+class CapabilityProbeFixRound1Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_canonical_tool_identifier_round_trips_and_bare_name_has_no_fake_uri(self):
+        from helpers.sam_client import SamClient
+
+        tools = copy.deepcopy(CURRENT_TOOLS)
+        tools[0]["name"] = "mcp://service-a/send_message"
+        async with FakeSamSidecar(tools=tools) as sidecar:
+            async with SamClient(config(sidecar)) as client:
+                observed = await client.list_tools()
+
+        canonical = observed[0]
+        bare = next(tool for tool in observed if tool.wire_name == "get_mesh_info")
+        self.assertEqual(canonical.wire_name, "mcp://service-a/send_message")
+        self.assertEqual(canonical.canonical_uri, "mcp://service-a/send_message")
+        self.assertEqual(canonical.wire_name, canonical.canonical_uri)
+        self.assertEqual(bare.wire_name, "get_mesh_info")
+        self.assertIsNone(bare.canonical_uri)
+
+    async def test_bare_tool_uri_requires_explicit_validated_service_identity(self):
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(
+                config(sidecar),
+                local_service_uri="mcp://local-node",
+            ) as client:
+                observed = await client.list_tools()
+
+        tool = next(item for item in observed if item.wire_name == "get_mesh_info")
+        self.assertEqual(tool.canonical_uri, "mcp://local-node/get_mesh_info")
+        self.assertEqual(tool.descriptor.canonical_uri, tool.canonical_uri)
+
+    async def test_mcp_tool_schema_is_deeply_immutable_source_snapshot(self):
+        from helpers.sam_client import McpTool
+
+        schema = {
+            "type": "object",
+            "properties": {"choice": {"enum": ["a"]}},
+        }
+        tool = McpTool(
+            wire_name="bare",
+            canonical_uri=None,
+            description="test",
+            input_schema=schema,
+            output_schema=None,
+            schema_hash="not-used-here",
+            descriptor=None,
+        )
+        schema["properties"]["choice"]["enum"].append("b")
+        self.assertEqual(
+            tool.input_schema["properties"]["choice"]["enum"],
+            ("a",),
+        )
+        with self.assertRaises(TypeError):
+            tool.input_schema["properties"]["choice"]["new"] = True
+
+    async def test_call_remote_schema_compatibility_is_not_invocation_authority(self):
+        from helpers.capabilities import CapabilityProbe
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(config(sidecar)) as client:
+                report = await CapabilityProbe(client).probe()
+
+        self.assertTrue(report.call_remote_tool_schema_compatible)
+        self.assertFalse(report.call_remote_tool_invocation_enabled)
+        self.assertEqual(
+            report.features["tool:call_remote_tool"].status,
+            ProbeStatus.VERIFIED_NOW,
+        )
+
+    async def test_call_remote_full_schema_drift_fails_closed(self):
+        from helpers.capabilities import CapabilityProbe
+        from helpers.sam_client import SamClient
+
+        mutations = (
+            lambda schema: schema["properties"].update({"confirm": {"type": "boolean"}}),
+            lambda schema: schema["properties"].pop("peer_id"),
+            lambda schema: schema["properties"].pop("arguments"),
+            lambda schema: schema["properties"].pop("required_labels"),
+            lambda schema: schema.update({"required": ["peer_id"]}),
+            lambda schema: schema.update(
+                {"required": ["peer_id", "tool_name", "required_labels"]}
+            ),
+            lambda schema: schema["properties"]["peer_id"].update({"type": "integer"}),
+            lambda schema: schema["properties"]["tool_name"].update({"type": "integer"}),
+        )
+        for mutate in mutations:
+            tools = copy.deepcopy(CURRENT_TOOLS)
+            schema = next(
+                tool for tool in tools if tool["name"] == "call_remote_tool"
+            )["inputSchema"]
+            mutate(schema)
+            async with FakeSamSidecar(tools=tools) as sidecar:
+                async with SamClient(config(sidecar)) as client:
+                    report = await CapabilityProbe(client).probe()
+            with self.subTest(schema=schema):
+                self.assertFalse(report.call_remote_tool_schema_compatible)
+                self.assertFalse(report.call_remote_tool_invocation_enabled)
+                self.assertEqual(
+                    report.features["tool:call_remote_tool"].status,
+                    ProbeStatus.SCHEMA_CHANGED,
+                )
+
+    async def test_healthy_current_surface_aggregates_verified_now(self):
+        from helpers.capabilities import CapabilityProbe
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(config(sidecar)) as client:
+                report = await CapabilityProbe(client).probe()
+
+        self.assertEqual(report.status, ProbeStatus.VERIFIED_NOW)
+        self.assertEqual(
+            report.features["tool:get_recent_logs"].status,
+            ProbeStatus.UNSUPPORTED,
+        )
+
+    async def test_report_and_client_metadata_are_deeply_immutable_snapshots(self):
+        from helpers.capabilities import CapabilityProbe
+        from helpers.sam_client import SamClient
+
+        ready = {"ready": True, "details": {"peers": ["peer-a"]}}
+        async with FakeSamSidecar(ready_payload=ready) as sidecar:
+            async with SamClient(config(sidecar)) as client:
+                capabilities = await client.initialize_mcp()
+                report = await CapabilityProbe(client).probe()
+
+        ready["details"]["peers"].append("peer-b")
+        self.assertEqual(report.node_metadata["readyz"]["details"]["peers"], ("peer-a",))
+        with self.assertRaises(TypeError):
+            report.node_metadata["readyz"]["details"]["new"] = True
+        with self.assertRaises(TypeError):
+            capabilities.capabilities["tools"]["listChanged"] = True
+
+    async def test_duplicate_model_ids_are_schema_changed(self):
+        from helpers.capabilities import CapabilityProbe
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        models = {"data": [{"id": "duplicate"}, {"id": "duplicate"}]}
+        async with FakeSamSidecar(models=models) as sidecar:
+            async with SamClient(config(sidecar)) as client:
+                with self.assertRaises(SamSchemaError):
+                    await client.list_models()
+                report = await CapabilityProbe(client).probe()
+        self.assertEqual(report.features["models"].status, ProbeStatus.SCHEMA_CHANGED)
+
+    async def test_tools_list_dependency_preserves_initialize_failure(self):
+        from helpers.capabilities import CapabilityProbe
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            sidecar.mcp_overrides["initialize"] = FakeResponse(401, body=b"{}")
+            async with SamClient(config(sidecar)) as client:
+                report = await CapabilityProbe(client).probe()
+
+        initialize = report.features["mcp_initialize"]
+        tools_list = report.features["tools_list"]
+        self.assertEqual(tools_list.status, initialize.status)
+        self.assertIn(initialize.detail, tools_list.detail)
+        self.assertIn("initialize", tools_list.detail)
 
 
 if __name__ == "__main__":
