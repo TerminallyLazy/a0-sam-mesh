@@ -1,0 +1,303 @@
+import json
+import sqlite3
+import tempfile
+import threading
+import unittest
+from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import MappingProxyType
+
+from helpers.audit import AuditAppendResult, AuditEvent, AuditStore, AuditVerifyResult
+from helpers.domain import DataClass, RiskLevel, RouteMode, Scope
+
+
+def plain(value):
+    if isinstance(value, MappingProxyType):
+        return {key: plain(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [plain(item) for item in value]
+    return value
+
+
+class MutableClock:
+    def __init__(self, value):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+
+def event(scope=None, details=None, sensitive_paths=()):
+    return AuditEvent(
+        scope=scope or Scope("project-a", "profile-a", "chat-a"),
+        event_type="remote_call",
+        destination="mcp://peer-secret/records/update",
+        decision_id="decision-raw-123",
+        lease_id="lease-raw-456",
+        risk_level=RiskLevel.MUTATION,
+        data_class=DataClass.INTERNAL,
+        route_mode=RouteMode.PINNED,
+        outcome="allowed",
+        latency_ms=12,
+        retry_count=0,
+        error_code=None,
+        details={"arguments": {"query": "safe"}} if details is None else details,
+        sensitive_paths=sensitive_paths,
+    )
+
+
+class HostileMapping(dict):
+    pass
+
+
+class AuditStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temporary.name) / "state" / "state.sqlite3"
+        self.clock = MutableClock(datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
+        self.store = AuditStore(db_path=self.db_path, clock=self.clock)
+        self.scope = Scope("project-a", "profile-a", "chat-a")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_recursive_and_explicit_redaction_happens_before_persistence_and_hashing(self):
+        secret = "RAW-TOKEN-DO-NOT-STORE"
+        result = self.store.append(
+            event(
+                details={
+                    "arguments": {
+                        "Token": secret,
+                        "nested": [{"authorization": secret, "query": "safe"}],
+                        "custom": secret,
+                    },
+                    "cookieJar": secret,
+                },
+                sensitive_paths=("details.arguments.custom",),
+            )
+        )
+        exported = self.store.list_redacted(self.scope, limit=10)
+
+        self.assertEqual(result.sequence, 1)
+        self.assertEqual(exported[0]["schema"], "a0.sam.audit/v1alpha1")
+        self.assertEqual(exported[0]["details"]["arguments"]["Token"], "[REDACTED]")
+        self.assertEqual(
+            exported[0]["details"]["arguments"]["nested"][0]["authorization"],
+            "[REDACTED]",
+        )
+        self.assertEqual(exported[0]["details"]["arguments"]["custom"], "[REDACTED]")
+        self.assertEqual(exported[0]["details"]["cookieJar"], "[REDACTED]")
+        self.assertNotIn(secret, json.dumps(plain(exported)))
+        for path in (self.db_path, Path(f"{self.db_path}-wal")):
+            if path.exists():
+                self.assertNotIn(secret.encode(), path.read_bytes())
+        self.assertTrue(self.store.verify_chain(self.scope).valid)
+
+    def test_raw_destination_decision_and_lease_ids_are_only_digest_aliases(self):
+        raw_values = (
+            "mcp://peer-secret/records/update",
+            "decision-raw-123",
+            "lease-raw-456",
+        )
+        self.store.append(event())
+        exported = self.store.list_redacted(self.scope, limit=1)[0]
+        serialized = json.dumps(plain(exported))
+
+        for raw in raw_values:
+            self.assertNotIn(raw, serialized)
+            self.assertNotIn(raw.encode(), self.db_path.read_bytes())
+        self.assertRegex(exported["destination_alias"], r"^dst_[0-9a-f]{24}$")
+        self.assertRegex(exported["decision_alias"], r"^dec_[0-9a-f]{24}$")
+        self.assertRegex(exported["lease_alias"], r"^lea_[0-9a-f]{24}$")
+
+    def test_canonical_chain_is_independent_of_input_mapping_insertion_order(self):
+        first_result = self.store.append(event(details={"z": 3, "a": {"y": 2, "x": 1}}))
+        other_path = Path(self.temporary.name) / "other" / "state.sqlite3"
+        other = AuditStore(db_path=other_path, clock=self.clock)
+        second_result = other.append(event(details={"a": {"x": 1, "y": 2}, "z": 3}))
+
+        self.assertEqual(first_result.event_hash, second_result.event_hash)
+        self.assertEqual(
+            json.dumps(plain(self.store.list_redacted(self.scope, limit=1)), sort_keys=True),
+            json.dumps(plain(other.list_redacted(self.scope, limit=1)), sort_keys=True),
+        )
+
+    def test_append_rejects_hostile_mutable_custom_cyclic_and_nonfinite_json(self):
+        cyclic = []
+        cyclic.append(cyclic)
+        cases = (
+            HostileMapping(value="x"),
+            {1: "non-string-key"},
+            {"bad": float("nan")},
+            {"cycle": cyclic},
+            {"custom": object()},
+        )
+        for details in cases:
+            with self.subTest(details=type(details).__name__), self.assertRaises(TypeError):
+                self.store.append(event(details=details))
+
+    def test_public_records_are_frozen_and_list_results_are_deeply_immutable_defensive_dtos(self):
+        original = {"nested": [{"query": "safe"}]}
+        audit_event = event(details=original)
+        self.assertNotIn("mcp://peer-secret", repr(audit_event))
+        self.assertNotIn("decision-raw", repr(audit_event))
+        self.assertNotIn("lease-raw", repr(audit_event))
+        self.assertNotIn("safe", repr(audit_event))
+        original["nested"][0]["query"] = "mutated-after-construction"
+        self.store.append(audit_event)
+        exported = self.store.list_redacted(self.scope, limit=1)
+
+        self.assertIsInstance(exported, tuple)
+        self.assertIsInstance(exported[0], MappingProxyType)
+        self.assertEqual(exported[0]["details"]["nested"][0]["query"], "safe")
+        with self.assertRaises(TypeError):
+            exported[0]["outcome"] = "tampered"
+        with self.assertRaises(FrozenInstanceError):
+            audit_event.event_type = "tampered"
+
+    def test_concurrent_append_has_contiguous_per_scope_sequence_and_valid_chain(self):
+        barrier = threading.Barrier(17)
+        results = []
+
+        def append(index):
+            barrier.wait()
+            results.append(self.store.append(event(details={"index": index})))
+
+        threads = [threading.Thread(target=append, args=(index,)) for index in range(16)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(sorted(result.sequence for result in results), list(range(1, 17)))
+        verification = self.store.verify_chain(self.scope)
+        self.assertTrue(verification.valid)
+        self.assertEqual(verification.head_sequence, 16)
+        self.assertEqual(verification.retained_count, 16)
+
+    def test_scope_partitions_listing_sequence_chain_retention_and_verification(self):
+        other_scope = Scope("project-a", "profile-a", "chat-b")
+        self.store.append(event(details={"scope": "a"}))
+        self.store.append(event(scope=other_scope, details={"scope": "b"}))
+
+        first = self.store.list_redacted(self.scope, limit=10)
+        second = self.store.list_redacted(other_scope, limit=10)
+        self.assertEqual(first[0]["sequence"], 1)
+        self.assertEqual(second[0]["sequence"], 1)
+        self.assertEqual(first[0]["details"]["scope"], "a")
+        self.assertEqual(second[0]["details"]["scope"], "b")
+        self.assertTrue(self.store.verify_chain(self.scope).valid)
+        self.assertTrue(self.store.verify_chain(other_scope).valid)
+        with self.assertRaises(ValueError):
+            self.store.list_redacted(Scope("project-a", "profile-a", ""), limit=10)
+
+    def test_listing_is_bounded_and_deterministically_newest_first(self):
+        for index in range(5):
+            self.store.append(event(details={"index": index}))
+        listed = self.store.list_redacted(self.scope, limit=3)
+        self.assertEqual([item["sequence"] for item in listed], [5, 4, 3])
+        for invalid in (0, -1, 1001, True):
+            with self.subTest(limit=invalid), self.assertRaises(ValueError):
+                self.store.list_redacted(self.scope, limit=invalid)
+
+    def test_count_retention_keeps_exactly_newest_ten_thousand_and_anchor_verifies(self):
+        for index in range(10_001):
+            self.store.append(event(details={"index": index}))
+
+        verification = self.store.verify_chain(self.scope)
+        listed = self.store.list_redacted(self.scope, limit=1000)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            count, minimum, maximum = connection.execute(
+                "SELECT COUNT(*), MIN(sequence), MAX(sequence) FROM audit_events "
+                "WHERE project = ? AND profile = ? AND chat = ?",
+                (self.scope.project_name, self.scope.agent_profile, self.scope.chat_id),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual((count, minimum, maximum), (10_000, 2, 10_001))
+        self.assertEqual(listed[0]["sequence"], 10_001)
+        self.assertTrue(verification.valid)
+        self.assertEqual(verification.base_sequence, 1)
+        self.assertEqual(verification.head_sequence, 10_001)
+        self.assertEqual(verification.retained_count, 10_000)
+
+    def test_thirty_day_boundary_prunes_contiguous_oldest_prefix_and_chain_stays_valid(self):
+        self.store.append(event(details={"age": "exactly-thirty-days"}))
+        self.clock.value += timedelta(microseconds=1)
+        self.store.append(event(details={"age": "inside-boundary"}))
+        self.clock.value += timedelta(days=30) - timedelta(microseconds=1)
+        self.store.append(event(details={"age": "now"}))
+
+        listed = self.store.list_redacted(self.scope, limit=10)
+        self.assertEqual([item["sequence"] for item in listed], [3, 2])
+        verification = self.store.verify_chain(self.scope)
+        self.assertTrue(verification.valid)
+        self.assertEqual(verification.base_sequence, 1)
+        self.assertEqual(verification.retained_count, 2)
+
+    def test_verify_chain_detects_payload_hash_prev_sequence_scope_head_and_count_tampering(self):
+        mutations = (
+            "UPDATE audit_events SET payload = '{}' WHERE sequence = 2",
+            "UPDATE audit_events SET event_hash = 'bad' WHERE sequence = 2",
+            "UPDATE audit_events SET prev_hash = 'bad' WHERE sequence = 2",
+            "UPDATE audit_events SET sequence = 9 WHERE sequence = 2",
+            "UPDATE audit_events SET chat = 'other' WHERE sequence = 2",
+            "UPDATE audit_heads SET head_hash = 'bad'",
+            "UPDATE audit_heads SET retained_count = 99",
+        )
+        for index, statement in enumerate(mutations):
+            with self.subTest(statement=statement):
+                path = Path(self.temporary.name) / f"tamper-{index}" / "state.sqlite3"
+                store = AuditStore(db_path=path, clock=self.clock)
+                store.append(event(details={"index": 1}))
+                store.append(event(details={"index": 2}))
+                connection = sqlite3.connect(path)
+                try:
+                    connection.execute(statement)
+                    connection.commit()
+                finally:
+                    connection.close()
+                result = store.verify_chain(self.scope)
+                self.assertFalse(result.valid)
+                self.assertRegex(result.reason, r"^audit_[a-z_]+$")
+                self.assertNotIn(str(path), repr(result))
+
+    def test_storage_errors_fail_closed_without_paths_or_exception_reprs(self):
+        self.store.append(event())
+        self.db_path.unlink()
+        self.db_path.mkdir()
+        with self.assertRaisesRegex(Exception, "audit_storage_unavailable") as captured:
+            self.store.append(event())
+        self.assertNotIn(str(self.db_path), str(captured.exception))
+        self.assertIsNone(captured.exception.__cause__)
+        result = self.store.verify_chain(self.scope)
+        self.assertFalse(result.valid)
+        self.assertEqual(result.reason, "audit_storage_unavailable")
+
+    def test_verify_chain_sanitizes_malformed_head_counters(self):
+        self.store.append(event())
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE audit_heads SET base_sequence = -1")
+            connection.commit()
+        finally:
+            connection.close()
+        result = self.store.verify_chain(self.scope)
+        self.assertFalse(result.valid)
+        self.assertEqual(result.reason, "audit_head_mismatch")
+
+    def test_audit_result_records_reject_invalid_public_values(self):
+        with self.assertRaises(ValueError):
+            AuditAppendResult(0, "not-a-hash", "not-a-timestamp")
+        with self.assertRaises(ValueError):
+            AuditVerifyResult(False, "invented_reason", 0, 0, 0)
+        with self.assertRaises(ValueError):
+            AuditVerifyResult(True, "audit_chain_valid", 2, 1, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
