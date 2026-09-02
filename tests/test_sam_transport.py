@@ -603,6 +603,24 @@ class SamTransportFixRound2Tests(unittest.IsolatedAsyncioTestCase):
                     ("::1",),
                 )
 
+    async def test_localhost_ipv4_loopback_is_allowed(self):
+        from helpers.mcp_transport import validate_tcp_origin
+
+        async def ipv4_loopback(*_args):
+            return [(0, 0, 0, "", ("127.0.0.1", 8080))]
+
+        config = TransportConfig(
+            "http",
+            "http://localhost:8080",
+            None,
+            None,
+            (),
+        )
+        self.assertEqual(
+            await validate_tcp_origin(config, resolver=ipv4_loopback),
+            ("127.0.0.1",),
+        )
+
     async def test_nonlocal_hostname_rejects_ipv4_and_ipv6_loopback(self):
         from helpers.mcp_transport import SamConnectivityError, validate_tcp_origin
 
