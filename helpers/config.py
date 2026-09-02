@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import stat
@@ -132,44 +133,163 @@ def _labels(value: Any, path: str) -> tuple[str, ...]:
     return labels
 
 
-def _normalize_base_url(value: Any) -> str:
-    raw_url = _string(value, "transport.base_url")
+def _normalize_base_url(value: Any, path: str = "transport.base_url") -> str:
+    raw_url = _string(value, path)
     try:
         parsed = urlsplit(raw_url)
         port = parsed.port
     except ValueError as exc:
-        raise ConfigError("transport.base_url is invalid") from exc
+        raise ConfigError(f"{path} is invalid") from exc
     if parsed.scheme.lower() not in {"http", "https"}:
-        raise ConfigError("transport.base_url must use http or https")
+        raise ConfigError(f"{path} must use http or https")
     if not parsed.hostname or parsed.username is not None or parsed.password is not None:
-        raise ConfigError("transport.base_url must not contain userinfo and must have a host")
+        raise ConfigError(f"{path} must not contain userinfo and must have a host")
     if parsed.fragment or parsed.query:
-        raise ConfigError("transport.base_url must not contain a query or fragment")
-    hostname = parsed.hostname
-    if ":" in hostname and not hostname.startswith("["):
+        raise ConfigError(f"{path} must not contain a query or fragment")
+    hostname = parsed.hostname.lower()
+    if ":" in hostname:
         hostname = f"[{hostname}]"
     netloc = hostname if port is None else f"{hostname}:{port}"
-    path = parsed.path.rstrip("/")
-    return urlunsplit((parsed.scheme.lower(), netloc, path, "", ""))
+    normalized_path = parsed.path.rstrip("/")
+    return urlunsplit((parsed.scheme.lower(), netloc, normalized_path, "", ""))
 
 
-def _validate_socket_path(value: Any, allowed_roots: tuple[str, ...]) -> str:
+def _url_origin(url: str) -> str:
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _normalize_allowed_origins(value: Any) -> tuple[str, ...]:
+    origins = _string_tuple(value, "transport.allowed_origins")
+    normalized: list[str] = []
+    for index, origin in enumerate(origins):
+        path = f"transport.allowed_origins[{index}]"
+        candidate = _normalize_base_url(origin, path)
+        if urlsplit(candidate).path:
+            raise ConfigError(f"{path} must be an origin without a path")
+        if candidate not in normalized:
+            normalized.append(candidate)
+    return tuple(normalized)
+
+
+def _validate_http_origin_policy(base_url: str, allowed_origins: tuple[str, ...]) -> None:
+    """Apply syntactic SSRF policy; Task 3 must validate DNS and connected peers."""
+    hostname = urlsplit(base_url).hostname
+    assert hostname is not None
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+
+    if address is not None:
+        if address.is_loopback:
+            return
+        if (
+            address.is_unspecified
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+        ):
+            raise ConfigError("transport.base_url uses a dangerous literal IP class")
+    elif hostname == "localhost":
+        return
+
+    if _url_origin(base_url) not in allowed_origins:
+        raise ConfigError(
+            "transport.base_url non-loopback host requires an explicit allowed origin"
+        )
+
+
+def _reject_relative_symlinks(socket_path: Path, allowed_root: Path) -> None:
+    current = allowed_root
+    for component in socket_path.relative_to(allowed_root).parts:
+        current = current / component
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise ConfigError("transport.socket_path cannot be inspected safely") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ConfigError("transport.socket_path has a symlinked path component")
+
+
+def _validate_socket_metadata(metadata: os.stat_result) -> None:
+    if not stat.S_ISSOCK(metadata.st_mode):
+        raise ConfigError("transport.socket_path must be a Unix socket")
+    if metadata.st_uid not in {0, os.geteuid()}:
+        raise ConfigError(
+            "transport.socket_path must be owned by root or the Agent Zero user"
+        )
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ConfigError("transport.socket_path must have safe permissions")
+
+
+def _validate_existing_socket(
+    socket_path: Path, allowed_root: Path, metadata: os.stat_result
+) -> None:
+    _validate_socket_metadata(metadata)
+    flags = getattr(os, "O_PATH", os.O_RDONLY) | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(socket_path, flags)
+    except OSError as exc:
+        raise ConfigError("transport.socket_path changed during validation") from exc
+    try:
+        opened_metadata = os.fstat(descriptor)
+        _reject_relative_symlinks(socket_path, allowed_root)
+        if (opened_metadata.st_dev, opened_metadata.st_ino) != (
+            metadata.st_dev,
+            metadata.st_ino,
+        ):
+            raise ConfigError("transport.socket_path changed during validation")
+        _validate_socket_metadata(opened_metadata)
+        current_metadata = socket_path.lstat()
+        if (current_metadata.st_dev, current_metadata.st_ino) != (
+            opened_metadata.st_dev,
+            opened_metadata.st_ino,
+        ):
+            raise ConfigError("transport.socket_path changed during validation")
+    except OSError as exc:
+        raise ConfigError("transport.socket_path changed during validation") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _validate_socket_path(
+    value: Any, allowed_roots: tuple[str, ...], *, allow_absent: bool
+) -> str:
     raw_path = _string(value, "transport.socket_path")
     socket_path = Path(raw_path).expanduser()
     if not socket_path.is_absolute():
         raise ConfigError("transport.socket_path must be absolute")
 
     resolved = socket_path.resolve(strict=False)
-    roots: list[Path] = []
+    matching_root: Path | None = None
     for root in allowed_roots:
         candidate = Path(root).expanduser()
         if not candidate.is_absolute():
             raise ConfigError("allowed socket roots must be absolute")
-        roots.append(candidate.resolve(strict=False))
-    if not roots or not any(resolved.is_relative_to(root) for root in roots):
+        canonical_root = candidate.resolve(strict=False)
+        if socket_path.is_relative_to(candidate) and resolved.is_relative_to(canonical_root):
+            matching_root = candidate
+            break
+    if matching_root is None:
         raise ConfigError("transport.socket_path is outside allowed socket roots")
-    if socket_path.is_symlink():
-        raise ConfigError("transport.socket_path must not be a symlink")
+
+    _reject_relative_symlinks(socket_path, matching_root)
+    try:
+        metadata = socket_path.lstat()
+    except FileNotFoundError:
+        if not allow_absent:
+            raise ConfigError(
+                "transport.socket_path is absent while remote authority is enabled"
+            )
+        return str(resolved)
+    except OSError as exc:
+        raise ConfigError("transport.socket_path cannot be inspected safely") from exc
+    _validate_existing_socket(socket_path, matching_root, metadata)
     return str(resolved)
 
 
@@ -242,13 +362,21 @@ def _parse_transport(
     *,
     context: Any,
     allowed_socket_roots: tuple[str, ...],
+    allow_absent_socket: bool,
 ) -> TransportConfig:
     transport = _mapping(value, "transport")
     if "token" in transport:
         raise ConfigError("transport must not contain a raw token")
     _reject_unknown(
         transport,
-        {"type", "base_url", "socket_path", "token_secret_name", "token_file"},
+        {
+            "type",
+            "base_url",
+            "socket_path",
+            "token_secret_name",
+            "token_file",
+            "allowed_origins",
+        },
         "transport",
     )
     transport_type = _choice(
@@ -257,13 +385,23 @@ def _parse_transport(
         "transport.type",
     )
     base_url = _normalize_base_url(_required(transport, "base_url", "transport"))
+    allowed_origins = _normalize_allowed_origins(
+        transport.get("allowed_origins", [])
+    )
     socket_value = transport.get("socket_path")
     if transport_type == "uds":
-        socket_path = _validate_socket_path(socket_value, allowed_socket_roots)
+        if allowed_origins:
+            raise ConfigError("transport.allowed_origins is only valid for http transport")
+        socket_path = _validate_socket_path(
+            socket_value,
+            allowed_socket_roots,
+            allow_absent=allow_absent_socket,
+        )
     else:
         if socket_value not in (None, ""):
             raise ConfigError("transport.socket_path is only valid for uds transport")
         socket_path = None
+        _validate_http_origin_policy(base_url, allowed_origins)
 
     secret_name = _string(
         transport.get("token_secret_name", ""),
@@ -285,6 +423,7 @@ def _parse_transport(
         base_url=base_url,
         socket_path=socket_path,
         token=token,
+        allowed_origins=allowed_origins,
     )
 
 
@@ -501,14 +640,28 @@ def resolve_config(
     context = getattr(agent, "context", None)
     if context is None:
         raise ConfigError("agent.context is required for scoped configuration")
+    passport = _parse_passport(_required(config, "passport", "config"))
+    features = _parse_features(_required(config, "features", "config"))
+    passport, features = _apply_mode_constraints(passport, features)
+    authority_disabled = (
+        passport.mode is OperatingMode.EXPLORER
+        and not passport.inference.enabled
+        and not passport.inbound.enabled
+        and not any(
+            (
+                features.remote_calls,
+                features.mesh_inference,
+                features.inbound_publication,
+                features.raw_mcp,
+            )
+        )
+    )
     transport = _parse_transport(
         _required(config, "transport", "config"),
         context=context,
         allowed_socket_roots=allowed_socket_roots,
+        allow_absent_socket=authority_disabled,
     )
-    passport = _parse_passport(_required(config, "passport", "config"))
-    features = _parse_features(_required(config, "features", "config"))
-    passport, features = _apply_mode_constraints(passport, features)
     return ResolvedConfig(
         transport=transport,
         passport=passport,

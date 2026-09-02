@@ -4,9 +4,52 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, Literal, Mapping
+
+
+def _freeze_json(value: Any, path: str = "schema") -> Any:
+    """Copy JSON data into recursively immutable containers."""
+    if isinstance(value, Mapping):
+        frozen: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"{path} must contain only JSON object keys")
+            frozen[key] = _freeze_json(item, f"{path}.{key}")
+        return MappingProxyType(frozen)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item, f"{path}[]") for item in value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    raise TypeError(f"{path} must contain only finite JSON values")
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain_json(item) for item in value]
+    return value
+
+
+def _tool_schema_hash(
+    input_schema: Mapping[str, Any], output_schema: Mapping[str, Any] | None
+) -> str:
+    canonical = json.dumps(
+        {
+            "input_schema": _plain_json(input_schema),
+            "output_schema": _plain_json(output_schema),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 class OperatingMode(StrEnum):
@@ -63,6 +106,7 @@ class TransportConfig:
     base_url: str
     socket_path: str | None
     token: str | None = field(repr=False)
+    allowed_origins: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -170,6 +214,23 @@ class ToolDescriptor:
     discovered_at: str
     discovery_source: str
     schema_hash: str
+
+    def __post_init__(self) -> None:
+        input_schema = _freeze_json(self.input_schema, "input_schema")
+        if not isinstance(input_schema, Mapping):
+            raise TypeError("input_schema must be a JSON object")
+        output_schema = (
+            None
+            if self.output_schema is None
+            else _freeze_json(self.output_schema, "output_schema")
+        )
+        if output_schema is not None and not isinstance(output_schema, Mapping):
+            raise TypeError("output_schema must be a JSON object or null")
+        expected_hash = _tool_schema_hash(input_schema, output_schema)
+        if self.schema_hash != expected_hash:
+            raise ValueError("schema_hash does not match the canonical frozen schemas")
+        object.__setattr__(self, "input_schema", input_schema)
+        object.__setattr__(self, "output_schema", output_schema)
 
 
 @dataclass(frozen=True)
