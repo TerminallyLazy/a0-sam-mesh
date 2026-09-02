@@ -102,6 +102,21 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(cfg.passport.inference.label_semantics, "any_of")
 
+    def test_required_labels_reject_nonexact_key_value_forms(self):
+        for label in (
+            " region=us",
+            "region=us ",
+            "region =us",
+            "region= us",
+            "region=us=extra",
+            "missing-separator",
+        ):
+            raw = plugin_config()
+            raw["passport"]["inference"]["required_labels"] = [label]
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ConfigError, "exact key=value"):
+                    resolve_config(fake_agent(), raw=raw)
+
     def test_unknown_keys_and_enum_values_fail_closed(self):
         cases = []
         top_level = plugin_config()

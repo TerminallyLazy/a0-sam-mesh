@@ -248,6 +248,55 @@ class CapabilityProbeFixRound1Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.canonical_uri, "mcp://local-node/get_mesh_info")
         self.assertEqual(tool.descriptor.canonical_uri, tool.canonical_uri)
 
+    async def test_tools_list_ingests_frozen_annotations_without_changing_schema_hash(self):
+        from helpers.sam_client import SamClient
+
+        tools = copy.deepcopy(CURRENT_TOOLS)
+        tools[0]["name"] = "mcp://service-a/send_message"
+        tools[0]["annotations"] = {
+            "destructiveHint": True,
+            "nested": {"values": ["a"]},
+        }
+        without_annotations = copy.deepcopy(tools)
+        without_annotations[0].pop("annotations")
+
+        async with FakeSamSidecar(tools=tools) as sidecar:
+            async with SamClient(config(sidecar)) as client:
+                annotated = (await client.list_tools())[0]
+        async with FakeSamSidecar(tools=without_annotations) as sidecar:
+            async with SamClient(config(sidecar)) as client:
+                plain = (await client.list_tools())[0]
+
+        self.assertEqual(annotated.annotations["destructiveHint"], True)
+        self.assertEqual(annotated.annotations["nested"]["values"], ("a",))
+        self.assertEqual(annotated.descriptor.annotations, annotated.annotations)
+        self.assertEqual(annotated.schema_hash, plain.schema_hash)
+        self.assertNotEqual(
+            annotated.descriptor.risk_metadata_hash(),
+            plain.descriptor.risk_metadata_hash(),
+        )
+        with self.assertRaises(TypeError):
+            annotated.annotations["new"] = True
+
+    async def test_tools_list_rejects_non_object_or_non_json_annotations(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        for annotations in (
+            [],
+            {"priority": float("nan")},
+            {"destructiveHint": "true"},
+            {"readOnlyHint": 0},
+            {"openWorldHint": None},
+        ):
+            tools = copy.deepcopy(CURRENT_TOOLS)
+            tools[0]["annotations"] = annotations
+            async with FakeSamSidecar(tools=tools) as sidecar:
+                async with SamClient(config(sidecar)) as client:
+                    with self.subTest(annotations=annotations):
+                        with self.assertRaises(SamSchemaError):
+                            await client.list_tools()
+
     async def test_mcp_tool_schema_is_deeply_immutable_source_snapshot(self):
         from helpers.sam_client import McpTool
 

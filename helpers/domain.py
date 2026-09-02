@@ -37,6 +37,23 @@ def _plain_json(value: Any) -> Any:
     return value
 
 
+def validate_required_label(value: object) -> str:
+    """Validate one exact SAM key=value label without normalizing wire identity."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("required labels must be exact nonempty key=value strings")
+    if value.count("=") != 1 or "," in value:
+        raise ValueError("required labels must be exact nonempty key=value strings")
+    key, label_value = value.split("=", 1)
+    if (
+        not key
+        or not label_value
+        or key != key.strip()
+        or label_value != label_value.strip()
+    ):
+        raise ValueError("required labels must be exact nonempty key=value strings")
+    return value
+
+
 def _tool_schema_hash(
     input_schema: Mapping[str, Any], output_schema: Mapping[str, Any] | None
 ) -> str:
@@ -236,6 +253,16 @@ class ToolDescriptor:
         object.__setattr__(self, "input_schema", input_schema)
         object.__setattr__(self, "output_schema", output_schema)
         object.__setattr__(self, "annotations", annotations)
+
+    def risk_metadata_hash(self) -> str:
+        """Fingerprint immutable risk metadata separately from schema compatibility."""
+        canonical = json.dumps(
+            _plain_json(self.annotations),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
 
 
 @dataclass(frozen=True)

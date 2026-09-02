@@ -6,8 +6,15 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Literal
 
-from .domain import CapabilityPassport, DataClass, OperatingMode, RiskLevel, ToolDescriptor
-from .risk import classify
+from .domain import (
+    CapabilityPassport,
+    DataClass,
+    OperatingMode,
+    RiskLevel,
+    ToolDescriptor,
+    validate_required_label,
+)
+from .risk import RiskAssessment, classify
 
 
 @dataclass(frozen=True)
@@ -53,12 +60,7 @@ def serialize_required_labels(labels: tuple[str, ...]) -> str:
     """Serialize immutable any-of labels exactly once for SAM's wire contract."""
     if not isinstance(labels, tuple):
         raise TypeError("required labels must be an immutable tuple")
-    for label in labels:
-        if not isinstance(label, str) or not label:
-            raise ValueError("required labels must be nonempty strings")
-        if "," in label:
-            raise ValueError("required labels must not contain commas")
-    return ",".join(labels)
+    return ",".join(validate_required_label(label) for label in labels)
 
 
 def _decision(
@@ -69,14 +71,13 @@ def _decision(
     reason: str,
     evidence: tuple[str, ...] = (),
 ) -> PassportDecision:
-    labels = passport.inference.required_labels
     return PassportDecision(
         outcome=outcome,
         reasons=(reason,),
         evidence=evidence,
         risk_level=risk_level,
         data_class=data_class,
-        required_labels=labels,
+        required_labels=passport.inference.required_labels,
     )
 
 
@@ -84,9 +85,12 @@ def evaluate(
     passport: CapabilityPassport,
     descriptor: ToolDescriptor,
     data_class: DataClass,
+    *,
+    risk_assessment: RiskAssessment | None = None,
+    remote_calls_enabled: bool = False,
 ) -> PassportDecision:
     """Evaluate fail-closed passport precedence against the canonical URI."""
-    risk = classify(descriptor, {})
+    descriptive_risk = risk_assessment or classify(descriptor, {})
     uri = descriptor.canonical_uri
 
     deny_rule = next(
@@ -97,7 +101,7 @@ def evaluate(
         return _decision(
             passport,
             data_class,
-            risk.level,
+            descriptive_risk.level,
             "deny",
             "explicit_deny",
             (f"deny_rule:{deny_rule}",),
@@ -108,7 +112,7 @@ def evaluate(
         return _decision(
             passport,
             data_class,
-            risk.level,
+            descriptive_risk.level,
             "deny",
             "data_class_ceiling_exceeded",
             (f"data_class:{data_class.value}", f"max_data_class:{maximum.value}"),
@@ -118,22 +122,31 @@ def evaluate(
         return _decision(
             passport,
             data_class,
-            risk.level,
+            descriptive_risk.level,
             "deny",
             "mode_blocks_guarded_invocation",
             (f"mode:{passport.mode.value}",),
         )
 
-    mutation_policy = passport.outbound.remote_mutations
-    if risk.level in _MUTATION_RISKS and mutation_policy == "deny":
+    if remote_calls_enabled is not True:
         return _decision(
             passport,
             data_class,
-            risk.level,
+            descriptive_risk.level,
             "deny",
-            "remote_mutations_denied",
-            risk.evidence,
+            "remote_calls_disabled",
         )
+
+    if risk_assessment is None:
+        return _decision(
+            passport,
+            data_class,
+            descriptive_risk.level,
+            "deny",
+            "risk_assessment_required",
+        )
+    if not isinstance(risk_assessment, RiskAssessment):
+        raise TypeError("risk_assessment must be a RiskAssessment")
 
     allow_rule = next(
         (pattern for pattern in passport.outbound.allow_services if fnmatchcase(uri, pattern)),
@@ -143,36 +156,47 @@ def evaluate(
         return _decision(
             passport,
             data_class,
-            risk.level,
+            risk_assessment.level,
             "deny",
             "not_explicitly_allowed",
         )
 
-    allow_evidence = (f"allow_rule:{allow_rule}",)
-    if risk.level in _MUTATION_RISKS and mutation_policy == "approval":
+    mutation_policy = passport.outbound.remote_mutations
+    if risk_assessment.level in _MUTATION_RISKS and mutation_policy == "deny":
         return _decision(
             passport,
             data_class,
-            risk.level,
-            "needs_approval",
-            "remote_mutation_requires_approval",
-            allow_evidence + risk.evidence,
+            risk_assessment.level,
+            "deny",
+            "remote_mutations_denied",
+            risk_assessment.evidence,
         )
 
-    if risk.level is RiskLevel.UNKNOWN:
+    allow_evidence = (f"allow_rule:{allow_rule}",)
+    if risk_assessment.requires_single_use_lease:
         return _decision(
             passport,
             data_class,
-            risk.level,
+            risk_assessment.level,
             "needs_approval",
-            "unknown_risk_requires_approval",
-            allow_evidence + ("risk:unknown",),
+            "single_use_lease_required",
+            allow_evidence + risk_assessment.evidence,
+        )
+
+    if risk_assessment.level is RiskLevel.NETWORK:
+        return _decision(
+            passport,
+            data_class,
+            risk_assessment.level,
+            "needs_approval",
+            "risk_approval_required",
+            allow_evidence + risk_assessment.evidence,
         )
 
     return _decision(
         passport,
         data_class,
-        risk.level,
+        risk_assessment.level,
         "allow",
         "explicit_allow",
         allow_evidence,

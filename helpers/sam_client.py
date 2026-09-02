@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any
@@ -99,6 +99,7 @@ class McpTool:
     output_schema: Mapping[str, Any] | None
     schema_hash: str
     descriptor: ToolDescriptor | None
+    annotations: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -112,6 +113,10 @@ class McpTool:
                 "output_schema",
                 _freeze_json(self.output_schema, "tool output schema"),
             )
+        annotations = _freeze_json(self.annotations, "tool annotations")
+        if not isinstance(annotations, Mapping):
+            raise SamSchemaError("tool annotations must be an object")
+        object.__setattr__(self, "annotations", annotations)
 
 
 def _timestamp() -> str:
@@ -138,6 +143,20 @@ def _object(value: Any, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise SamSchemaError(f"{name} must be an object")
     return value
+
+
+def _validate_tool_annotations(value: Mapping[str, Any], name: str) -> None:
+    boolean_hints = (
+        "readOnlyHint",
+        "destructiveHint",
+        "idempotentHint",
+        "openWorldHint",
+    )
+    for hint in boolean_hints:
+        if hint in value and not isinstance(value[hint], bool):
+            raise SamSchemaError(f"MCP tool {name} annotation {hint} must be boolean")
+    if "title" in value and not isinstance(value["title"], str):
+        raise SamSchemaError(f"MCP tool {name} annotation title must be a string")
 
 
 def _canonical_tool_uri(value: str) -> str | None:
@@ -250,11 +269,14 @@ class SamClient:
             description = tool.get("description", "")
             input_schema = tool.get("inputSchema")
             output_schema = tool.get("outputSchema")
+            annotations = tool.get("annotations", {})
             if not isinstance(wire_name, str) or not wire_name or wire_name in names:
                 raise SamSchemaError("MCP tool names must be unique nonempty strings")
             if not isinstance(description, str):
                 raise SamSchemaError("MCP tool descriptions must be strings")
             input_schema = _object(input_schema, f"MCP tool {wire_name} inputSchema")
+            annotations = _object(annotations, f"MCP tool {wire_name} annotations")
+            _validate_tool_annotations(annotations, wire_name)
             if output_schema is not None:
                 output_schema = _object(
                     output_schema,
@@ -266,6 +288,7 @@ class SamClient:
                 if output_schema is None
                 else _freeze_json(output_schema, "tool output schema")
             )
+            frozen_annotations = _freeze_json(annotations, "tool annotations")
             schema_hash = _schema_hash(frozen_input, frozen_output)
             canonical_uri = _canonical_tool_uri(wire_name)
             if canonical_uri is None and self._local_service_uri is not None:
@@ -285,6 +308,7 @@ class SamClient:
                         discovered_at=discovered_at,
                         discovery_source="mcp_tools_list",
                         schema_hash=schema_hash,
+                        annotations=frozen_annotations,
                     )
                 except (TypeError, ValueError) as exc:
                     raise SamSchemaError(
@@ -299,6 +323,7 @@ class SamClient:
                     output_schema=frozen_output,
                     schema_hash=schema_hash,
                     descriptor=descriptor,
+                    annotations=frozen_annotations,
                 )
             )
             names.add(wire_name)

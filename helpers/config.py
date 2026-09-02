@@ -24,6 +24,7 @@ from .domain import (
     RouteMode,
     Scope,
     TransportConfig,
+    validate_required_label,
 )
 
 CONFIG_SCHEMA = "a0.sam.config/v1alpha1"
@@ -125,12 +126,17 @@ def _string_tuple(value: Any, path: str) -> tuple[str, ...]:
 
 
 def _labels(value: Any, path: str) -> tuple[str, ...]:
-    labels = _string_tuple(value, path)
-    for label in labels:
-        key, separator, label_value = label.partition("=")
-        if not separator or not key.strip() or not label_value.strip() or "," in label:
-            raise ConfigError(f"{path} entries must be exact key=value labels")
-    return labels
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ConfigError(f"{path} must be an array of strings")
+    labels: list[str] = []
+    for index, item in enumerate(value):
+        try:
+            label = validate_required_label(item)
+        except ValueError as exc:
+            raise ConfigError(f"{path} entries must be exact key=value labels") from exc
+        if label not in labels:
+            labels.append(label)
+    return tuple(labels)
 
 
 def _normalize_base_url(value: Any, path: str = "transport.base_url") -> str:
