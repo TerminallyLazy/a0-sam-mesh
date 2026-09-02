@@ -21,11 +21,33 @@ class RiskAssessment:
     evidence: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.level, RiskLevel):
+            raise TypeError("risk level must be a RiskLevel")
+        if not isinstance(self.requires_single_use_lease, bool):
+            raise TypeError("requires_single_use_lease must be a boolean")
         expected = self.level in _SINGLE_USE_LEVELS
         if self.requires_single_use_lease is not expected:
             raise ValueError("requires_single_use_lease is inconsistent with risk level")
         if not isinstance(self.reasons, tuple) or not isinstance(self.evidence, tuple):
             raise TypeError("risk reasons and evidence must be immutable tuples")
+        if not self.reasons or len(self.reasons) > 16:
+            raise ValueError("risk reasons must contain between 1 and 16 entries")
+        if len(self.evidence) > 64:
+            raise ValueError("risk evidence must contain at most 64 entries")
+        if any(
+            not isinstance(reason, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", reason)
+            for reason in self.reasons
+        ):
+            raise ValueError("risk reasons must be bounded safe identifiers")
+        if any(
+            not isinstance(item, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", item)
+            for item in self.evidence
+        ):
+            raise ValueError("risk evidence must use the bounded safe evidence format")
+        if len(self.evidence) != len(set(self.evidence)):
+            raise ValueError("risk evidence must be deduplicated")
 
 
 _RISK_PRECEDENCE = (
