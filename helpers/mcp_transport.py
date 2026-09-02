@@ -158,10 +158,15 @@ async def validate_tcp_origin(
             address = ipaddress.ip_address(raw_address)
         except (IndexError, TypeError, ValueError) as exc:
             raise SamConnectivityError("SAM TCP host returned an invalid address") from exc
-        nonlocal_hostname = literal is None and host.lower() != "localhost"
-        if _address_is_forbidden(address) or (
-            nonlocal_hostname and address.is_loopback
-        ):
+        configured_local = host.lower() == "localhost" or (
+            literal is not None and literal.is_loopback
+        )
+        if address.is_loopback:
+            if not configured_local:
+                raise SamConnectivityError(
+                    "SAM TCP host resolved to a forbidden address class"
+                )
+        elif _address_is_forbidden(address):
             raise SamConnectivityError("SAM TCP host resolved to a forbidden address class")
         rendered = str(address)
         if rendered not in addresses:
@@ -175,13 +180,18 @@ def _machine_policy_denial(value: Any) -> bool:
     error = value.get("error", value)
     if not isinstance(error, Mapping):
         return False
-    code = str(error.get("code", "")).lower()
-    category = str(error.get("type", error.get("category", ""))).lower()
-    return code in {"policy_denied", "permission_denied", "authorization_denied"} or category in {
-        "policy_denied",
-        "permission_denied",
-        "authorization_denied",
+    data = error.get("data")
+    if not isinstance(data, Mapping):
+        return False
+    markers = {
+        str(data.get("type", "")).lower(),
+        str(data.get("code", "")).lower(),
+        str(data.get("category", "")).lower(),
     }
+    return bool(
+        markers
+        & {"policy_denied", "permission_denied", "authorization_denied"}
+    )
 
 
 def _decode_json_bytes(body: bytes) -> Any:
@@ -470,9 +480,7 @@ class McpStreamableSession:
             raise SamSchemaError("MCP error must be an object")
         code = error.get("code")
         message = error.get("message")
-        valid_code = (
-            isinstance(code, str) and bool(code)
-        ) or (isinstance(code, int) and not isinstance(code, bool))
+        valid_code = isinstance(code, int) and not isinstance(code, bool)
         if not valid_code or not isinstance(message, str) or not message:
             raise SamSchemaError("MCP error must contain a valid code and message")
         return error
@@ -492,30 +500,42 @@ class McpStreamableSession:
             "method": method,
             "params": params,
         }
-        response, values = await self._send(
-            "POST",
-            "/mcp",
-            json_body=payload,
-            headers=self._session_headers() if include_session else {},
-            ambiguous_tool_call=method == "tools/call",
-        )
-        message = self._matching_message(values, request_id)
-        if message.get("jsonrpc") != "2.0":
-            raise SamSchemaError("MCP response has an invalid JSON-RPC version")
-        has_result = "result" in message
-        has_error = "error" in message
-        if has_result == has_error:
-            raise SamSchemaError("MCP response must contain exactly one result or error")
-        if has_error:
-            error = self._validate_error(message["error"])
-            if _machine_policy_denial({"error": error}):
-                raise SamPolicyDenied("SAM policy denied the MCP request")
-            raise SamProviderError(
-                f"SAM MCP request failed with code {error['code']!r}"
+        tool_call = method == "tools/call"
+        try:
+            response, values = await self._send(
+                "POST",
+                "/mcp",
+                json_body=payload,
+                headers=self._session_headers() if include_session else {},
+                ambiguous_tool_call=tool_call,
             )
-        result = message["result"]
-        if not isinstance(result, Mapping):
-            raise SamSchemaError("MCP response result must be an object")
+            message = self._matching_message(values, request_id)
+            if message.get("jsonrpc") != "2.0":
+                raise SamSchemaError("MCP response has an invalid JSON-RPC version")
+            has_result = "result" in message
+            has_error = "error" in message
+            if has_result == has_error:
+                raise SamSchemaError(
+                    "MCP response must contain exactly one result or error"
+                )
+            if has_error:
+                error = self._validate_error(message["error"])
+                if _machine_policy_denial({"error": error}):
+                    raise SamPolicyDenied("SAM policy denied the MCP request")
+                raise SamProviderError(
+                    f"SAM MCP request failed with code {error['code']!r}"
+                )
+            result = message["result"]
+            if not isinstance(result, Mapping):
+                raise SamSchemaError("MCP response result must be an object")
+        except SamSchemaError as exc:
+            if tool_call:
+                raise SamCallAmbiguous(
+                    "SAM tools/call returned an unusable response",
+                    phase="response",
+                    dispatched=True,
+                ) from exc
+            raise
         return dict(result), response
 
     async def request(

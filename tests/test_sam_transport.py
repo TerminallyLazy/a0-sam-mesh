@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -459,6 +460,166 @@ class SamTransportFixRound1Tests(unittest.IsolatedAsyncioTestCase):
             async with SamClient(http_config(sidecar, token=None)) as client:
                 with self.assertRaises(SamSchemaError):
                     await client.health()
+
+
+class SamTransportFixRound2Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_json_rpc_error_code_requires_integer(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        cases = (
+            (False, "denied"),
+            ("policy_denied", "denied"),
+            (1.5, "denied"),
+            (-32000, ""),
+        )
+        for code, message in cases:
+            async with FakeSamSidecar() as sidecar:
+                async with SamClient(http_config(sidecar, token=None)) as client:
+                    await client.initialize_mcp()
+                    body = json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": client.mcp.next_request_id,
+                            "error": {"code": code, "message": message},
+                        }
+                    ).encode()
+                    sidecar.mcp_overrides["tools/list"] = FakeResponse(200, body=body)
+                    with self.subTest(code=code):
+                        with self.assertRaises(SamSchemaError):
+                            await client.list_tools()
+
+    async def test_valid_integer_policy_error_data_maps_to_policy_denied(self):
+        from helpers.mcp_transport import SamPolicyDenied
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                await client.initialize_mcp()
+                body = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": client.mcp.next_request_id,
+                        "error": {
+                            "code": -32003,
+                            "message": "remote policy denied the call",
+                            "data": {"type": "policy_denied"},
+                        },
+                    }
+                ).encode()
+                sidecar.mcp_overrides["tools/call"] = FakeResponse(200, body=body)
+                with self.assertRaises(SamPolicyDenied):
+                    await client.call_mcp_tool("get_mesh_info", {})
+        self.assertEqual(sidecar.count_mcp_method("tools/call"), 1)
+
+    async def test_unusable_tool_responses_are_ambiguous_and_not_replayed(self):
+        from helpers.mcp_transport import MCP_RESPONSE_MAX_BYTES, SamCallAmbiguous
+        from helpers.sam_client import SamClient
+
+        responses = {
+            "malformed_json": FakeResponse(200, body=b"{"),
+            "oversized": FakeResponse(
+                200,
+                body=b"x" * (MCP_RESPONSE_MAX_BYTES + 1),
+            ),
+            "malformed_sse": FakeResponse(
+                200,
+                content_type="text/event-stream",
+                body=b"data: {\n\n",
+            ),
+            "unsupported_media": FakeResponse(
+                200,
+                content_type="text/html",
+                body=b"not-json",
+            ),
+            "invalid_json_rpc_result": FakeResponse(
+                200,
+                body=b'{"jsonrpc":"2.0","id":2,"result":[]}',
+            ),
+        }
+        for name, response in responses.items():
+            async with FakeSamSidecar() as sidecar:
+                async with SamClient(http_config(sidecar, token=None)) as client:
+                    await client.initialize_mcp()
+                    sidecar.mcp_overrides["tools/call"] = response
+                    with self.subTest(name=name):
+                        with self.assertRaises(SamCallAmbiguous) as raised:
+                            await client.call_mcp_tool("get_mesh_info", {})
+                        self.assertEqual(raised.exception.phase, "response")
+                        self.assertTrue(
+                            raised.exception.duplicate_execution_possible
+                        )
+            self.assertEqual(sidecar.count_mcp_method("tools/call"), 1)
+
+    async def test_malformed_tool_result_is_ambiguous_and_not_replayed(self):
+        from helpers.mcp_transport import SamCallAmbiguous
+        from helpers.sam_client import SamClient
+
+        body = b'{"jsonrpc":"2.0","id":2,"result":{"content":"bad"}}'
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                await client.initialize_mcp()
+                sidecar.mcp_overrides["tools/call"] = FakeResponse(200, body=body)
+                with self.assertRaises(SamCallAmbiguous) as raised:
+                    await client.call_mcp_tool("get_mesh_info", {})
+        self.assertEqual(raised.exception.phase, "response")
+        self.assertTrue(raised.exception.duplicate_execution_possible)
+        self.assertEqual(sidecar.count_mcp_method("tools/call"), 1)
+
+    async def test_pre_dispatch_endpoint_failure_is_not_ambiguous(self):
+        from helpers.mcp_transport import SamCallAmbiguous, SamConnectivityError
+        from helpers.sam_client import SamClient
+
+        resolutions = iter(("127.0.0.1", "127.0.0.1", "169.254.169.254"))
+
+        async def changing_resolver(*_args):
+            return [(0, 0, 0, "", (next(resolutions), 80))]
+
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(
+                http_config(sidecar, token=None),
+                resolver=changing_resolver,
+            ) as client:
+                await client.initialize_mcp()
+                with self.assertRaises(SamConnectivityError) as raised:
+                    await client.call_mcp_tool("get_mesh_info", {})
+                self.assertNotIsInstance(raised.exception, SamCallAmbiguous)
+                self.assertFalse(
+                    getattr(raised.exception, "duplicate_execution_possible", False)
+                )
+        self.assertEqual(sidecar.count_mcp_method("tools/call"), 0)
+
+    async def test_explicit_ipv6_and_localhost_ipv6_loopback_are_allowed(self):
+        from helpers.mcp_transport import validate_tcp_origin
+
+        async def ipv6_loopback(*_args):
+            return [(0, 0, 0, "", ("::1", 8080, 0, 0))]
+
+        for base_url in ("http://[::1]:8080", "http://localhost:8080"):
+            config = TransportConfig("http", base_url, None, None, ())
+            with self.subTest(base_url=base_url):
+                self.assertEqual(
+                    await validate_tcp_origin(config, resolver=ipv6_loopback),
+                    ("::1",),
+                )
+
+    async def test_nonlocal_hostname_rejects_ipv4_and_ipv6_loopback(self):
+        from helpers.mcp_transport import SamConnectivityError, validate_tcp_origin
+
+        config = TransportConfig(
+            "http",
+            "https://sam.example:8443",
+            None,
+            None,
+            ("https://sam.example:8443",),
+        )
+        for address in ("127.0.0.1", "::1"):
+            async def loopback(*_args, address=address):
+                return [(0, 0, 0, "", (address, 8443))]
+
+            with self.subTest(address=address):
+                with self.assertRaises(SamConnectivityError):
+                    await validate_tcp_origin(config, resolver=loopback)
 
 
 if __name__ == "__main__":

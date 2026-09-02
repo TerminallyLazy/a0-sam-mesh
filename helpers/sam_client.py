@@ -13,7 +13,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .domain import MeshModel, ToolDescriptor, TransportConfig
-from .mcp_transport import McpStreamableSession, Resolver, SamProviderError, SamSchemaError
+from .mcp_transport import (
+    McpStreamableSession,
+    Resolver,
+    SamCallAmbiguous,
+    SamProviderError,
+    SamSchemaError,
+)
 
 
 def _freeze_json(value: Any, path: str) -> Any:
@@ -303,17 +309,30 @@ class SamClient:
         name: str,
         arguments: dict[str, Any],
     ) -> ToolResult:
-        result = _object(await self.mcp.call_tool(name, arguments), "MCP tool result")
-        content = result.get("content", [])
-        structured = result.get("structuredContent", result.get("structured", {}))
-        is_error = result.get("isError", False)
-        if not isinstance(content, list) or not all(
-            isinstance(item, Mapping) for item in content
-        ):
-            raise SamSchemaError("MCP tool content must be an array of objects")
-        structured = _object(structured, "MCP structured tool result")
-        if not isinstance(is_error, bool):
-            raise SamSchemaError("MCP tool isError must be a boolean")
+        result = await self.mcp.call_tool(name, arguments)
+        try:
+            result = _object(result, "MCP tool result")
+            content = result.get("content", [])
+            structured = result.get(
+                "structuredContent",
+                result.get("structured", {}),
+            )
+            is_error = result.get("isError", False)
+            if not isinstance(content, list) or not all(
+                isinstance(item, Mapping) for item in content
+            ):
+                raise SamSchemaError(
+                    "MCP tool content must be an array of objects"
+                )
+            structured = _object(structured, "MCP structured tool result")
+            if not isinstance(is_error, bool):
+                raise SamSchemaError("MCP tool isError must be a boolean")
+        except SamSchemaError as exc:
+            raise SamCallAmbiguous(
+                "SAM tools/call returned an unusable tool result",
+                phase="response",
+                dispatched=True,
+            ) from exc
         if is_error:
             raise SamProviderError("SAM MCP tool returned an application error")
         return ToolResult(

@@ -304,8 +304,9 @@ class FakeSamSidecar:
                         "jsonrpc": "2.0",
                         "id": request_id,
                         "error": {
-                            "code": "policy_denied",
+                            "code": -32003,
                             "message": "remote policy denied the call",
+                            "data": {"type": "policy_denied"},
                         },
                     },
                 )
