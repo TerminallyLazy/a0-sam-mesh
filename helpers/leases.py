@@ -17,6 +17,7 @@ from .storage import (
     SQLiteStorage,
     StorageUnavailableError,
     canonical_hash,
+    parse_timestamp,
     timestamp_text,
     timestamp_us,
     validate_scope,
@@ -157,6 +158,8 @@ class ApprovalLease:
     schema: str = LEASE_SCHEMA
 
     def __post_init__(self) -> None:
+        if type(self.schema) is not str or self.schema != LEASE_SCHEMA:
+            raise ValueError("invalid lease schema")
         if type(self.id) is not str or len(self.id) < 40:
             raise ValueError("lease ID is invalid")
         if not isinstance(self.request, LeaseRequest):
@@ -235,8 +238,8 @@ def risk_assessment_binding_hash(assessment: RiskAssessment) -> str:
 class LeaseStore:
     """SQLite lease store with one short-lived connection per operation."""
 
-    def __init__(self, *, db_path: str | Path | None = None, clock=None) -> None:
-        options = {"db_path": db_path}
+    def __init__(self, *, db_path: str | Path | None = None, trusted_root=None, clock=None) -> None:
+        options = {"db_path": db_path, "trusted_root": trusted_root}
         if clock is not None:
             options["clock"] = clock
         self._storage = SQLiteStorage(**options)
@@ -333,6 +336,39 @@ class LeaseStore:
             approver_id=approver,
         )
 
+    @staticmethod
+    def _validate_row(row, request):
+        """Reject malformed selected storage before evaluating authorization precedence."""
+        if row is None:
+            return
+        for name in ('lease_digest', 'binding_hash'):
+            _hash(row[name], name)
+        scope = validate_scope(Scope(row['project'], row['profile'], row['chat']))
+        for name in ('issued_at_us', 'expires_at_us', 'max_uses', 'use_count', 'revoked'):
+            if type(row[name]) is not int:
+                raise ValueError("invalid stored integer")
+        issued = parse_timestamp(row['issued_at'])
+        expires = parse_timestamp(row['expires_at'])
+        if (timestamp_us(issued) != row['issued_at_us']
+                or timestamp_us(expires) != row['expires_at_us']
+                or not 1 <= (expires - issued).total_seconds() <= _MAX_TTL_SECONDS
+                or not 1 <= row['max_uses'] <= _MAX_USES
+                or not 0 <= row['use_count'] <= row['max_uses']
+                or row['revoked'] not in (0, 1)):
+            raise ValueError("invalid stored lease")
+        if row['revoked']:
+            if parse_timestamp(row['revoked_at']) < issued:
+                raise ValueError("invalid revocation time")
+        elif row['revoked_at'] is not None:
+            raise ValueError("invalid revocation state")
+        _exact_string(row['approver_id'], 'approver_id', optional=True)
+        # A matching request provides the preimage for stored binding metadata.
+        if row['binding_hash'] == request.binding_hash():
+            if scope != request.scope:
+                raise ValueError("corrupt scope metadata")
+            if request.risk_level in _SINGLE_USE_RISKS and row['max_uses'] != 1:
+                raise ValueError("corrupt single-use limit")
+
     def consume(self, lease_id: str, request: LeaseRequest) -> LeaseConsumeResult:
         if type(lease_id) is not str or not lease_id:
             return LeaseConsumeResult(False, "lease_not_found")
@@ -348,6 +384,7 @@ class LeaseStore:
                     "SELECT * FROM leases WHERE lease_digest = ?",
                     (lease_digest,),
                 ).fetchone()
+                self._validate_row(row, request)
                 if row is None:
                     result = LeaseConsumeResult(False, "lease_not_found")
                 elif row["revoked"]:
@@ -382,7 +419,7 @@ class LeaseStore:
                 raise
             finally:
                 connection.close()
-        except (StorageUnavailableError, sqlite3.Error):
+        except (StorageUnavailableError, sqlite3.Error, ValueError, TypeError, OverflowError):
             return LeaseConsumeResult(False, "lease_storage_unavailable")
 
     def revoke_scope(self, scope: Scope) -> int:

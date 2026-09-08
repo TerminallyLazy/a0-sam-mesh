@@ -20,6 +20,7 @@ from .storage import (
     canonical_json_bytes,
     copy_plain_json,
     digest_alias,
+    parse_timestamp,
     timestamp_text,
     timestamp_us,
     validate_scope,
@@ -84,20 +85,21 @@ def _plain_json(value: Any) -> Any:
     return value
 
 
-def _validate_sensitive_paths(value: object) -> tuple[tuple[str, ...], ...]:
+def _validate_sensitive_paths(value: object) -> tuple[tuple[str | int, ...], ...]:
     if type(value) is not tuple or len(value) > 64:
-        raise TypeError("sensitive_paths must be a bounded tuple")
-    parsed: list[tuple[str, ...]] = []
-    for item in value:
-        if type(item) is not str or not item or item != item.strip():
-            raise ValueError("sensitive paths must be exact dotted paths")
-        parts = tuple(item.split("."))
-        if any(not part or len(part.encode("utf-8")) > 256 for part in parts):
-            raise ValueError("sensitive paths must be exact dotted paths")
-        parsed.append(parts)
-    if len(parsed) != len(set(parsed)):
+        raise TypeError("sensitive_paths must be a bounded tuple of segment tuples")
+    for path in value:
+        if type(path) is not tuple or not 1 <= len(path) <= 32 or path[0] != "details":
+            raise ValueError("sensitive paths must be exact detail segment tuples")
+        for segment in path:
+            if type(segment) is int and 0 <= segment <= 20_000:
+                continue
+            if type(segment) is str and len(segment.encode("utf-8")) <= 256:
+                continue
+            raise ValueError("invalid sensitive path segment")
+    if len(value) != len(set(value)):
         raise ValueError("sensitive paths must be unique")
-    return tuple(parsed)
+    return value
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,7 @@ class AuditEvent:
     retry_count: int
     error_code: str | None
     details: Mapping[str, Any] = field(repr=False)
-    sensitive_paths: tuple[str, ...] = field(default=(), repr=False)
+    sensitive_paths: tuple[tuple[str | int, ...], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         validate_scope(self.scope)
@@ -148,7 +150,7 @@ class AuditEvent:
         details = copy_plain_json(self.details, "details")
         paths = _validate_sensitive_paths(self.sensitive_paths)
         object.__setattr__(self, "details", _freeze_json(details))
-        object.__setattr__(self, "sensitive_paths", tuple(".".join(path) for path in paths))
+        object.__setattr__(self, "sensitive_paths", paths)
 
 
 @dataclass(frozen=True)
@@ -162,8 +164,7 @@ class AuditAppendResult:
             raise ValueError("sequence must be a positive integer")
         if type(self.event_hash) is not str or not _HASH.fullmatch(self.event_hash):
             raise ValueError("event_hash must be a lowercase SHA-256 digest")
-        if type(self.timestamp) is not str or not self.timestamp.endswith("Z"):
-            raise ValueError("timestamp must be a UTC timestamp")
+        parse_timestamp(self.timestamp)
 
 
 @dataclass(frozen=True)
@@ -190,7 +191,11 @@ class AuditVerifyResult:
             raise ValueError("base_sequence cannot exceed head_sequence")
 
 
-def _redact(value: Any, sensitive: set[tuple[str, ...]], path: tuple[str, ...] = ()) -> Any:
+def _redact(
+    value: Any, sensitive: set[tuple[str | int, ...]], path: tuple[str | int, ...] = ()
+) -> Any:
+    if path in sensitive:
+        return _REDACTED
     if type(value) is dict:
         redacted: dict[str, Any] = {}
         for key, item in value.items():
@@ -201,7 +206,7 @@ def _redact(value: Any, sensitive: set[tuple[str, ...]], path: tuple[str, ...] =
                 redacted[key] = _redact(item, sensitive, item_path)
         return redacted
     if type(value) is list:
-        return [_redact(item, sensitive, path + (str(index),)) for index, item in enumerate(value)]
+        return [_redact(item, sensitive, path + (index,)) for index, item in enumerate(value)]
     return value
 
 
@@ -222,8 +227,8 @@ def _scope_values(scope: Scope) -> tuple[str, str, str]:
 class AuditStore:
     """Append and verify redacted events using short-lived SQLite connections."""
 
-    def __init__(self, *, db_path: str | Path | None = None, clock=None) -> None:
-        options = {"db_path": db_path}
+    def __init__(self, *, db_path: str | Path | None = None, trusted_root=None, clock=None) -> None:
+        options = {"db_path": db_path, "trusted_root": trusted_root}
         if clock is not None:
             options["clock"] = clock
         self._storage = SQLiteStorage(**options)
@@ -311,7 +316,7 @@ class AuditStore:
             "error_code": event.error_code,
             "details": _plain_json(event.details),
         }
-        sensitive = {tuple(path.split(".")) for path in event.sensitive_paths}
+        sensitive = set(event.sensitive_paths)
         return _redact(raw, sensitive)
 
     @staticmethod
@@ -376,7 +381,9 @@ class AuditStore:
             try:
                 self._initialize(connection)
                 connection.execute("BEGIN IMMEDIATE")
-                head = self._read_head(connection, event.scope)
+                head, rows = self._read_state(connection, event.scope)
+                if not self._validate_state(event.scope, head, rows).valid:
+                    raise AuditStorageError("audit_storage_unavailable")
                 if head is None:
                     connection.execute(
                         """
@@ -456,6 +463,66 @@ class AuditStore:
         except (StorageUnavailableError, sqlite3.Error):
             raise AuditStorageError("audit_storage_unavailable") from None
 
+    def _read_state(self, connection, scope):
+        head = self._read_head(connection, scope)
+        rows = connection.execute(
+            "SELECT * FROM audit_events WHERE project = ? AND profile = ? AND chat = ? "
+            "ORDER BY sequence LIMIT 10001", _scope_values(scope),
+        ).fetchall()
+        return head, rows
+
+    @staticmethod
+    def _validate_state(scope, head, rows):
+        """Validate only the supplied transaction snapshot; never reopen storage."""
+        bad = AuditVerifyResult(False, "audit_head_mismatch", 0, 0, 0)
+        try:
+            if head is None:
+                return bad if rows else AuditVerifyResult(True, "audit_chain_valid", 0, 0, 0)
+            base, end, count = (head[k] for k in (
+                "base_sequence", "head_sequence", "retained_count",
+            ))
+            if (any(type(v) is not int for v in (base, end, count))
+                    or not 0 <= base <= end < 2**63 - 1
+                    or not 0 <= count <= _MAX_EVENTS
+                    or count != end - base or count != len(rows)
+                    or _scope_values(scope)
+                    != tuple(head[k] for k in ('project', 'profile', 'chat'))):
+                return bad
+            for key in ('base_hash', 'head_hash'):
+                if type(head[key]) is not str or not _HASH.fullmatch(head[key]):
+                    return bad
+            if base == 0 and head['base_hash'] != ZERO_HASH:
+                return bad
+            previous = head['base_hash']
+            for expected, row in enumerate(rows, base + 1):
+                if (type(row['sequence']) is not int or row['sequence'] != expected
+                        or tuple(row[k] for k in ('project', 'profile', 'chat'))
+                        != _scope_values(scope)
+                        or row['prev_hash'] != previous):
+                    return bad
+                if (type(row['payload']) is not str or len(row['payload']) > 4_194_304
+                        or type(row['event_hash']) is not str
+                        or not _HASH.fullmatch(row['event_hash'])):
+                    return bad
+                payload = copy_plain_json(json.loads(row['payload']))
+                stamp = parse_timestamp(payload['timestamp'])
+                if (payload['schema'] != AUDIT_SCHEMA
+                        or type(payload['sequence']) is not int
+                        or payload['sequence'] != expected
+                        or payload['scope'] != dict(zip(('project', 'profile', 'chat'),
+                                                       _scope_values(scope)))
+                        or row['occurred_at'] != payload['timestamp']
+                        or type(row['occurred_at_us']) is not int
+                        or row['occurred_at_us'] != timestamp_us(stamp)
+                        or _chain_hash(payload, previous) != row['event_hash']):
+                    return bad
+                previous = row['event_hash']
+            if previous != head['head_hash']:
+                return bad
+            return AuditVerifyResult(True, "audit_chain_valid", base, end, count)
+        except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+            return bad
+
     def list_redacted(self, scope: Scope, *, limit: int) -> tuple[Mapping[str, Any], ...]:
         validated = validate_scope(scope)
         if type(limit) is not int or not 1 <= limit <= _MAX_LIST_LIMIT:
@@ -464,27 +531,21 @@ class AuditStore:
             connection = self._storage.connect(validated)
             try:
                 self._initialize(connection)
-                rows = connection.execute(
-                    """
-                    SELECT sequence, payload, event_hash FROM audit_events
-                    WHERE project = ? AND profile = ? AND chat = ?
-                    ORDER BY sequence DESC LIMIT ?
-                    """,
-                    _scope_values(validated) + (limit,),
-                ).fetchall()
+                connection.execute("BEGIN")
+                head, rows = self._read_state(connection, validated)
+                if not self._validate_state(validated, head, rows).valid:
+                    raise AuditStorageError("audit_storage_unavailable")
+                output = []
+                for row in reversed(rows[-limit:]):
+                    payload = _redact(copy_plain_json(json.loads(row['payload'])), set())
+                    payload['integrity_chain_hash'] = row['event_hash']
+                    output.append(_freeze_json(payload))
+                connection.commit()
+                return tuple(output)
             finally:
                 connection.close()
-        except (StorageUnavailableError, sqlite3.Error):
+        except (StorageUnavailableError, sqlite3.Error, ValueError, TypeError, KeyError):
             raise AuditStorageError("audit_storage_unavailable") from None
-        output: list[Mapping[str, Any]] = []
-        for row in rows:
-            try:
-                payload = copy_plain_json(json.loads(row["payload"]), "stored audit event")
-            except (json.JSONDecodeError, TypeError, ValueError):
-                raise AuditStorageError("audit_storage_unavailable") from None
-            payload["integrity_chain_hash"] = row["event_hash"]
-            output.append(_freeze_json(payload))
-        return tuple(output)
 
     def verify_chain(self, scope: Scope) -> AuditVerifyResult:
         try:
@@ -492,93 +553,12 @@ class AuditStore:
             connection = self._storage.connect(validated)
             try:
                 self._initialize(connection)
-                head = self._read_head(connection, validated)
-                rows = connection.execute(
-                    """
-                    SELECT project, profile, chat, sequence, payload, prev_hash, event_hash
-                    FROM audit_events
-                    WHERE project = ? AND profile = ? AND chat = ?
-                    ORDER BY sequence
-                    """,
-                    _scope_values(validated),
-                ).fetchall()
+                connection.execute("BEGIN")
+                head, rows = self._read_state(connection, validated)
+                result = self._validate_state(validated, head, rows)
+                connection.commit()
+                return result
             finally:
                 connection.close()
-        except (StorageUnavailableError, sqlite3.Error, ValueError):
+        except (StorageUnavailableError, sqlite3.Error, ValueError, TypeError):
             return AuditVerifyResult(False, "audit_storage_unavailable", 0, 0, 0)
-        if head is None:
-            if rows:
-                return AuditVerifyResult(False, "audit_head_mismatch", 0, 0, len(rows))
-            return AuditVerifyResult(True, "audit_chain_valid", 0, 0, 0)
-        base_sequence = head["base_sequence"]
-        head_sequence = head["head_sequence"]
-        retained_count = head["retained_count"]
-        if (
-            type(base_sequence) is not int
-            or type(head_sequence) is not int
-            or type(retained_count) is not int
-            or base_sequence < 0
-            or head_sequence < base_sequence
-            or retained_count < 0
-            or type(head["base_hash"]) is not str
-            or not _HASH.fullmatch(head["base_hash"])
-            or type(head["head_hash"]) is not str
-            or not _HASH.fullmatch(head["head_hash"])
-        ):
-            return AuditVerifyResult(False, "audit_head_mismatch", 0, 0, len(rows))
-        if retained_count != len(rows):
-            return AuditVerifyResult(
-                False,
-                "audit_count_mismatch",
-                base_sequence,
-                head_sequence,
-                len(rows),
-            )
-        expected_sequence = base_sequence + 1
-        previous_hash = head["base_hash"]
-        for row in rows:
-            if row["sequence"] != expected_sequence:
-                return AuditVerifyResult(
-                    False, "audit_sequence_mismatch", base_sequence, head_sequence, len(rows)
-                )
-            if (row["project"], row["profile"], row["chat"]) != _scope_values(validated):
-                return AuditVerifyResult(
-                    False, "audit_scope_mismatch", base_sequence, head_sequence, len(rows)
-                )
-            if row["prev_hash"] != previous_hash:
-                return AuditVerifyResult(
-                    False, "audit_prev_hash_mismatch", base_sequence, head_sequence, len(rows)
-                )
-            try:
-                payload = copy_plain_json(json.loads(row["payload"]), "stored audit event")
-                payload_scope = payload["scope"]
-                if (
-                    payload["schema"] != AUDIT_SCHEMA
-                    or payload["sequence"] != row["sequence"]
-                    or payload_scope
-                    != {
-                        "project": validated.project_name,
-                        "profile": validated.agent_profile,
-                        "chat": validated.chat_id,
-                    }
-                ):
-                    raise ValueError("payload binding mismatch")
-                calculated = _chain_hash(payload, previous_hash)
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                return AuditVerifyResult(
-                    False, "audit_payload_mismatch", base_sequence, head_sequence, len(rows)
-                )
-            if calculated != row["event_hash"]:
-                return AuditVerifyResult(
-                    False, "audit_hash_mismatch", base_sequence, head_sequence, len(rows)
-                )
-            previous_hash = row["event_hash"]
-            expected_sequence += 1
-        expected_head_sequence = rows[-1]["sequence"] if rows else base_sequence
-        if head_sequence != expected_head_sequence or head["head_hash"] != previous_hash:
-            return AuditVerifyResult(
-                False, "audit_head_mismatch", base_sequence, head_sequence, len(rows)
-            )
-        return AuditVerifyResult(
-            True, "audit_chain_valid", base_sequence, head_sequence, retained_count
-        )

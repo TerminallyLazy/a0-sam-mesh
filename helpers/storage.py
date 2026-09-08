@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import stat
 from collections.abc import Callable
@@ -36,11 +37,24 @@ def validate_clock_value(value: object) -> datetime:
 
 
 def timestamp_us(value: datetime) -> int:
-    return int(validate_clock_value(value).timestamp() * 1_000_000)
+    delta = validate_clock_value(value) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
 
 
 def timestamp_text(value: datetime) -> str:
     return validate_clock_value(value).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def parse_timestamp(value: object) -> datetime:
+    """Accept only canonical UTC microsecond timestamps, without float rounding."""
+    if type(value) is not str or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z", value
+    ):
+        raise ValueError("invalid timestamp")
+    parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    if timestamp_text(parsed) != value:
+        raise ValueError("invalid timestamp")
+    return parsed
 
 
 def validate_scope(scope: object) -> Scope:
@@ -139,9 +153,11 @@ class SQLiteStorage:
         *,
         db_path: str | Path | None = None,
         clock: Callable[[], datetime] = utc_now,
+        trusted_root: str | Path | None = None,
     ) -> None:
         self._explicit_path = None if db_path is None else Path(db_path)
         self._clock = clock
+        self._trusted_root = None if trusted_root is None else Path(trusted_root)
 
     def now(self) -> datetime:
         return validate_clock_value(self._clock())
@@ -161,56 +177,105 @@ class SQLiteStorage:
             raise StorageUnavailableError("storage_unavailable")
         return path
 
-    def _prepare_path(self, path: Path) -> None:
-        try:
-            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            parent = path.parent.lstat()
-            if stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode):
-                raise StorageUnavailableError("storage_unavailable")
-            os.chmod(path.parent, 0o700)
-            try:
-                metadata = path.lstat()
-            except FileNotFoundError:
-                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                if hasattr(os, "O_NOFOLLOW"):
-                    flags |= os.O_NOFOLLOW
-                try:
-                    descriptor = os.open(path, flags, 0o600)
-                except FileExistsError:
-                    metadata = path.lstat()
-                else:
-                    os.close(descriptor)
-                    metadata = path.lstat()
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-                raise StorageUnavailableError("storage_unavailable")
-            if metadata.st_uid != os.geteuid():
-                raise StorageUnavailableError("storage_unavailable")
-            os.chmod(path, 0o600)
-        except StorageUnavailableError:
-            raise
-        except (OSError, ValueError) as exc:
-            raise StorageUnavailableError("storage_unavailable") from exc
 
     def connect(self, scope: Scope) -> sqlite3.Connection:
-        path = self.path_for_scope(scope)
-        self._prepare_path(path)
+        """Traverse from / with openat, then retain verified descriptors until close.
+
+        Explicit paths require a caller-trusted root. Production paths use A0's user
+        root. The trusted process UID/root remain outside this filesystem boundary.
+        """
+        descriptors = []
+        connection = None
         try:
+            path = self.path_for_scope(scope)
+            root = self._trusted_root
+            if root is None:
+                if self._explicit_path is not None:
+                    raise ValueError("trusted root required")
+                from helpers import files
+                root = Path(files.get_abs_path(files.USER_DIR))
+            if not root.is_absolute() or '..' in path.parts or '..' in root.parts:
+                raise ValueError("invalid root")
+            path.relative_to(root)
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+            parent = os.open('/', flags)
+            descriptors.append(parent)
+            current = Path('/')
+            for part in path.parent.parts[1:]:
+                current = current / part
+                try:
+                    child = os.open(part, flags, dir_fd=parent)
+                except FileNotFoundError:
+                    if not current.is_relative_to(root):
+                        raise
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=parent)
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, flags, dir_fd=parent)
+                descriptors.append(child)
+                metadata = os.fstat(child)
+                if metadata.st_uid not in {0, os.geteuid()}:
+                    raise ValueError("untrusted owner")
+                if current.is_relative_to(root):
+                    if metadata.st_uid != os.geteuid():
+                        raise ValueError("untrusted owner")
+                    # Existing intermediate framework dirs may be readable, not writable.
+                    if metadata.st_mode & 0o022:
+                        raise ValueError("unsafe directory")
+                    if current == path.parent:
+                        os.fchmod(child, 0o700)
+                parent = child
+            db = os.open(path.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+                         | os.O_NONBLOCK | os.O_CLOEXEC, 0o600, dir_fd=parent)
+            descriptors.append(db)
+            metadata = os.fstat(db)
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid()
+                    or metadata.st_nlink != 1):
+                raise ValueError("unsafe database")
+            os.fchmod(db, 0o600)
+            for suffix in ('-wal', '-shm', '-journal'):
+                try:
+                    side = os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if (not stat.S_ISREG(side.st_mode) or side.st_uid != os.geteuid()
+                        or side.st_nlink != 1 or side.st_mode & 0o077):
+                    raise ValueError("unsafe sidecar")
             connection = sqlite3.connect(
-                path,
-                timeout=BUSY_TIMEOUT_MS / 1_000,
-                isolation_level=None,
+                f'/proc/self/fd/{db}', timeout=BUSY_TIMEOUT_MS / 1000,
+                isolation_level=None, factory=_AnchoredConnection,
             )
+            # SQLite resolves the proc fd to the verified inode's current pathname.
+            opened = connection.execute('PRAGMA database_list').fetchone()[2]
+            actual = os.stat(opened, follow_symlinks=False)
+            if (actual.st_dev, actual.st_ino) != (metadata.st_dev, metadata.st_ino):
+                raise ValueError("database substituted")
             connection.row_factory = sqlite3.Row
-            connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA synchronous = FULL")
-            journal = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
-            if str(journal).casefold() != "wal":
-                connection.close()
-                raise StorageUnavailableError("storage_unavailable")
-            os.chmod(path, 0o600)
+            connection.execute(f'PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}')
+            connection.execute('PRAGMA foreign_keys = ON')
+            connection.execute('PRAGMA synchronous = FULL')
+            if connection.execute('PRAGMA journal_mode = WAL').fetchone()[0] != 'wal':
+                raise ValueError("WAL unavailable")
+            connection._descriptors = descriptors
+            descriptors = []
             return connection
-        except StorageUnavailableError:
-            raise
-        except (OSError, sqlite3.Error) as exc:
-            raise StorageUnavailableError("storage_unavailable") from exc
+        except (OSError, ValueError, ImportError, sqlite3.Error):
+            if connection is not None:
+                connection.close()
+            raise StorageUnavailableError("storage_unavailable") from None
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+
+
+class _AnchoredConnection(sqlite3.Connection):
+    """Own Linux directory/inode anchors for exactly the connection lifetime."""
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            for descriptor in reversed(getattr(self, '_descriptors', [])):
+                os.close(descriptor)
+            self._descriptors = []

@@ -55,9 +55,14 @@ def request(**changes):
 class LeaseStoreTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temporary.name) / "private" / "state.sqlite3"
+        self.trusted_root = Path(self.temporary.name)
+        self.db_path = self.trusted_root / "private" / "state.sqlite3"
         self.clock = MutableClock(datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
-        self.store = LeaseStore(db_path=self.db_path, clock=self.clock)
+        self.store = LeaseStore(
+            db_path=self.db_path,
+            trusted_root=self.trusted_root,
+            clock=self.clock,
+        )
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -218,7 +223,7 @@ class LeaseStoreTests(unittest.TestCase):
             "helpers.storage._determine_plugin_asset_path",
             return_value=str(expected),
         ) as fn:
-            store = LeaseStore(clock=self.clock)
+            store = LeaseStore(trusted_root=self.trusted_root, clock=self.clock)
             store.issue(request(), ttl_seconds=60, max_uses=1)
         fn.assert_called_with("project-a", "profile-a")
 
@@ -228,7 +233,11 @@ class LeaseStoreTests(unittest.TestCase):
         link = Path(self.temporary.name) / "link.sqlite3"
         link.symlink_to(target)
         with self.assertRaisesRegex(Exception, "storage_unavailable"):
-            LeaseStore(db_path=link, clock=self.clock).issue(
+            LeaseStore(
+                db_path=link,
+                trusted_root=self.trusted_root,
+                clock=self.clock,
+            ).issue(
                 request(), ttl_seconds=60, max_uses=1
             )
 
@@ -239,13 +248,18 @@ class LeaseStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "storage_unavailable"):
             LeaseStore(
                 db_path=linked_parent / "state.sqlite3",
+                trusted_root=self.trusted_root,
                 clock=self.clock,
             ).issue(request(), ttl_seconds=60, max_uses=1)
 
         directory = Path(self.temporary.name) / "directory.sqlite3"
         directory.mkdir()
         with self.assertRaisesRegex(Exception, "storage_unavailable"):
-            LeaseStore(db_path=directory, clock=self.clock).issue(
+            LeaseStore(
+                db_path=directory,
+                trusted_root=self.trusted_root,
+                clock=self.clock,
+            ).issue(
                 request(), ttl_seconds=60, max_uses=1
             )
 
@@ -308,6 +322,150 @@ class LeaseStoreTests(unittest.TestCase):
                 max_uses=1,
                 uses=0,
             )
+        with self.assertRaises(ValueError):
+            ApprovalLease(
+                id="x" * 43,
+                request=request(),
+                issued_at=self.clock.value,
+                expires_at=self.clock.value + timedelta(seconds=1),
+                max_uses=1,
+                uses=0,
+                schema="a0.sam.lease/wrong",
+            )
+
+    def test_consume_rejects_every_malformed_selected_row_before_precedence(self):
+        mutations = (
+            ("project", 7),
+            ("profile", b"profile"),
+            ("chat", ""),
+            ("binding_hash", "bad"),
+            ("issued_at_us", "bad"),
+            ("issued_at", "2026-09-02T12:00:00Z"),
+            ("expires_at_us", -1),
+            ("expires_at", "not-a-time"),
+            ("max_uses", 0),
+            ("max_uses", 2),
+            ("use_count", -1),
+            ("use_count", 2),
+            ("revoked", 2),
+            ("revoked_at", "2026-09-02T12:00:01.000000Z"),
+            ("approver_id", b"bad"),
+        )
+        for index, (column, value) in enumerate(mutations):
+            with self.subTest(column=column, value=value):
+                path = self.trusted_root / f"malformed-{index}" / "state.sqlite3"
+                store = LeaseStore(
+                    db_path=path,
+                    trusted_root=self.trusted_root,
+                    clock=self.clock,
+                )
+                lease = store.issue(request(), ttl_seconds=60, max_uses=1)
+                connection = sqlite3.connect(path)
+                try:
+                    connection.execute("PRAGMA ignore_check_constraints = ON")
+                    connection.execute(f"UPDATE leases SET {column} = ?", (value,))
+                    connection.commit()
+                finally:
+                    connection.close()
+                result = store.consume(lease.id, request())
+                self.assertEqual(
+                    result,
+                    LeaseConsumeResult(False, "lease_storage_unavailable"),
+                )
+
+    def test_consume_rejects_timestamp_and_revocation_cross_field_corruption(self):
+        cases = (
+            (
+                "UPDATE leases SET issued_at_us = issued_at_us + 1",
+                (),
+            ),
+            (
+                "UPDATE leases SET expires_at_us = issued_at_us",
+                (),
+            ),
+            (
+                "UPDATE leases SET revoked = 1, revoked_at = NULL",
+                (),
+            ),
+            (
+                "UPDATE leases SET revoked = 1, revoked_at = ?",
+                ("2026-09-02T11:59:59.000000Z",),
+            ),
+        )
+        for index, (statement, parameters) in enumerate(cases):
+            with self.subTest(statement=statement):
+                path = self.trusted_root / f"cross-{index}" / "state.sqlite3"
+                store = LeaseStore(
+                    db_path=path,
+                    trusted_root=self.trusted_root,
+                    clock=self.clock,
+                )
+                lease = store.issue(request(), ttl_seconds=60, max_uses=1)
+                connection = sqlite3.connect(path)
+                try:
+                    connection.execute("PRAGMA ignore_check_constraints = ON")
+                    connection.execute(statement, parameters)
+                    connection.commit()
+                finally:
+                    connection.close()
+                self.assertEqual(
+                    store.consume(lease.id, request()).reason,
+                    "lease_storage_unavailable",
+                )
+
+    def test_explicit_database_path_requires_trusted_root(self):
+        with self.assertRaisesRegex(Exception, "storage_unavailable"):
+            LeaseStore(db_path=self.db_path, clock=self.clock).issue(
+                request(), ttl_seconds=60, max_uses=1
+            )
+
+    def test_every_database_ancestor_is_opened_without_following_symlinks(self):
+        for depth in (0, 1):
+            with self.subTest(depth=depth):
+                root = self.trusted_root / f"ancestor-{depth}"
+                root.mkdir()
+                outside = self.trusted_root / f"outside-{depth}"
+                outside.mkdir()
+                if depth == 0:
+                    (root / "one").symlink_to(outside, target_is_directory=True)
+                else:
+                    (root / "one").mkdir()
+                    (root / "one" / "two").symlink_to(
+                        outside,
+                        target_is_directory=True,
+                    )
+                path = root / "one" / "two" / "state.sqlite3"
+                with self.assertRaisesRegex(Exception, "storage_unavailable"):
+                    LeaseStore(
+                        db_path=path,
+                        trusted_root=root,
+                        clock=self.clock,
+                    ).issue(request(), ttl_seconds=60, max_uses=1)
+
+    def test_database_open_is_anchored_if_parent_path_is_substituted(self):
+        parent = self.trusted_root / "anchored"
+        path = parent / "state.sqlite3"
+        detached = self.trusted_root / "detached"
+        real_connect = sqlite3.connect
+        swapped = False
+
+        def substitute(database, *args, **kwargs):
+            nonlocal swapped
+            if not swapped:
+                parent.rename(detached)
+                parent.mkdir()
+                swapped = True
+            return real_connect(database, *args, **kwargs)
+
+        with patch("helpers.storage.sqlite3.connect", side_effect=substitute):
+            LeaseStore(
+                db_path=path,
+                trusted_root=self.trusted_root,
+                clock=self.clock,
+            ).issue(request(), ttl_seconds=60, max_uses=1)
+
+        self.assertTrue((detached / "state.sqlite3").is_file())
+        self.assertFalse((parent / "state.sqlite3").exists())
 
     def test_public_storage_errors_do_not_chain_raw_path_exceptions(self):
         self.db_path.mkdir(parents=True)

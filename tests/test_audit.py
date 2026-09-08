@@ -7,8 +7,15 @@ from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
+from unittest.mock import patch
 
-from helpers.audit import AuditAppendResult, AuditEvent, AuditStore, AuditVerifyResult
+from helpers.audit import (
+    AuditAppendResult,
+    AuditEvent,
+    AuditStorageError,
+    AuditStore,
+    AuditVerifyResult,
+)
 from helpers.domain import DataClass, RiskLevel, RouteMode, Scope
 
 
@@ -54,9 +61,14 @@ class HostileMapping(dict):
 class AuditStoreTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temporary.name) / "state" / "state.sqlite3"
+        self.trusted_root = Path(self.temporary.name)
+        self.db_path = self.trusted_root / "state" / "state.sqlite3"
         self.clock = MutableClock(datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
-        self.store = AuditStore(db_path=self.db_path, clock=self.clock)
+        self.store = AuditStore(
+            db_path=self.db_path,
+            trusted_root=self.trusted_root,
+            clock=self.clock,
+        )
         self.scope = Scope("project-a", "profile-a", "chat-a")
 
     def tearDown(self):
@@ -74,7 +86,7 @@ class AuditStoreTests(unittest.TestCase):
                     },
                     "cookieJar": secret,
                 },
-                sensitive_paths=("details.arguments.custom",),
+                sensitive_paths=(("details", "arguments", "custom"),),
             )
         )
         exported = self.store.list_redacted(self.scope, limit=10)
@@ -114,7 +126,7 @@ class AuditStoreTests(unittest.TestCase):
     def test_canonical_chain_is_independent_of_input_mapping_insertion_order(self):
         first_result = self.store.append(event(details={"z": 3, "a": {"y": 2, "x": 1}}))
         other_path = Path(self.temporary.name) / "other" / "state.sqlite3"
-        other = AuditStore(db_path=other_path, clock=self.clock)
+        other = AuditStore(db_path=other_path, trusted_root=self.trusted_root, clock=self.clock)
         second_result = other.append(event(details={"a": {"x": 1, "y": 2}, "z": 3}))
 
         self.assertEqual(first_result.event_hash, second_result.event_hash)
@@ -252,7 +264,7 @@ class AuditStoreTests(unittest.TestCase):
         for index, statement in enumerate(mutations):
             with self.subTest(statement=statement):
                 path = Path(self.temporary.name) / f"tamper-{index}" / "state.sqlite3"
-                store = AuditStore(db_path=path, clock=self.clock)
+                store = AuditStore(db_path=path, trusted_root=self.trusted_root, clock=self.clock)
                 store.append(event(details={"index": 1}))
                 store.append(event(details={"index": 2}))
                 connection = sqlite3.connect(path)
@@ -297,6 +309,79 @@ class AuditStoreTests(unittest.TestCase):
             AuditVerifyResult(False, "invented_reason", 0, 0, 0)
         with self.assertRaises(ValueError):
             AuditVerifyResult(True, "audit_chain_valid", 2, 1, 0)
+
+class AuditFixTests(unittest.TestCase):
+    setUp = AuditStoreTests.setUp
+    tearDown = AuditStoreTests.tearDown
+
+    def test_listing_rejects_tampered_sensitive_payload(self):
+        self.store.append(event())
+        with sqlite3.connect(self.db_path) as c:
+            payload = json.loads(c.execute('SELECT payload FROM audit_events').fetchone()[0])
+            payload['details']['password'] = 'tampered-sensitive-value'
+            c.execute('UPDATE audit_events SET payload = ?', (json.dumps(payload),))
+        with self.assertRaises(AuditStorageError) as caught:
+            self.store.list_redacted(self.scope, limit=1)
+        self.assertEqual(str(caught.exception), 'audit_storage_unavailable')
+
+    def test_read_snapshot_survives_interleaved_append(self):
+        self.store.append(event())
+        read_head = self.store._read_head
+        fired = False
+
+        def interleave(c, scope):
+            nonlocal fired
+            head = read_head(c, scope)
+            if not fired:
+                fired = True
+                self.store.append(event(details={'later': True}))
+            return head
+
+        with patch.object(self.store, '_read_head', side_effect=interleave):
+            result = self.store.verify_chain(self.scope)
+        self.assertTrue(result.valid)
+        self.assertEqual(result.head_sequence, 1)
+
+    def test_append_rejects_bad_heads_and_timestamp_columns(self):
+        cases = (
+            "UPDATE audit_heads SET head_sequence = 'bad'",
+            "UPDATE audit_heads SET head_hash = 'bad'",
+            "UPDATE audit_heads SET retained_count = 5",
+            "UPDATE audit_heads SET base_sequence = 1",
+            "UPDATE audit_events SET occurred_at_us = 0",
+            "UPDATE audit_events SET occurred_at_us = 9000000000000000",
+            "UPDATE audit_events SET occurred_at = 'bad'",
+        )
+        for i, sql in enumerate(cases):
+            with self.subTest(sql=sql):
+                path = self.trusted_root / f'bad-{i}' / 'state.sqlite3'
+                store = AuditStore(db_path=path, trusted_root=self.trusted_root, clock=self.clock)
+                store.append(event())
+                with sqlite3.connect(path) as c:
+                    c.execute(sql)
+                with self.assertRaises(AuditStorageError):
+                    store.append(event())
+                self.assertFalse(store.verify_chain(self.scope).valid)
+                with self.assertRaises(AuditStorageError):
+                    store.list_redacted(self.scope, limit=1)
+                with sqlite3.connect(path) as c:
+                    count = c.execute('SELECT COUNT(*) FROM audit_events').fetchone()[0]
+                    self.assertEqual(count, 1)
+
+    def test_exact_sensitive_segments_and_strict_timestamp(self):
+        details = {'a.b/~': [{'0': 'hide', 'keep': 'yes'}], 'a': {'b': 'keep'}}
+        self.store.append(event(
+            details=details, sensitive_paths=(('details', 'a.b/~', 0, '0'),),
+        ))
+        dto = self.store.list_redacted(self.scope, limit=1)[0]['details']
+        self.assertEqual(dto['a.b/~'][0]['0'], '[REDACTED]')
+        self.assertEqual(dto['a']['b'], 'keep')
+        with self.assertRaises((TypeError, ValueError)):
+            event(sensitive_paths=('details.a.b',))
+        for timestamp in ('nonsenseZ', '2026-09-02T00:00:00Z',
+                          '2026-02-30T00:00:00.000000Z'):
+            with self.subTest(timestamp=timestamp), self.assertRaises(ValueError):
+                AuditAppendResult(1, 'a' * 64, timestamp)
 
 
 if __name__ == "__main__":
