@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import sys
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -37,6 +41,8 @@ _ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _MAX_EVENTS = 10_000
 _MAX_AGE = timedelta(days=30)
 _MAX_LIST_LIMIT = 1_000
+_CACHE_MAX_BYTES = 32 * 1024 * 1024
+_CACHE_MAX_SCOPES = 4
 _HASH = re.compile(r"[0-9a-f]{64}")
 _VERIFY_REASONS = {
     "audit_chain_valid",
@@ -224,6 +230,11 @@ def _scope_values(scope: Scope) -> tuple[str, str, str]:
     return scope.project_name, scope.agent_profile, scope.chat_id
 
 
+def _row_signature(row):
+    """Immutable type-exact representation of every selected persisted field."""
+    return tuple((type(value), value) for value in row)
+
+
 class AuditStore:
     """Append and verify redacted events using short-lived SQLite connections."""
 
@@ -232,6 +243,9 @@ class AuditStore:
         if clock is not None:
             options["clock"] = clock
         self._storage = SQLiteStorage(**options)
+        self._cache_lock = threading.Lock()
+        self._validated_rows = OrderedDict()
+        self._cache_bytes = 0
 
     @staticmethod
     def _initialize(connection: sqlite3.Connection) -> None:
@@ -382,7 +396,10 @@ class AuditStore:
                 self._initialize(connection)
                 connection.execute("BEGIN IMMEDIATE")
                 head, rows = self._read_state(connection, event.scope)
-                if not self._validate_state(event.scope, head, rows).valid:
+                cache_key = self._cache_key(connection, event.scope)
+                with self._cache_lock:
+                    cached = self._validated_rows.get(cache_key, ({}, 0))[0]
+                if not self._validate_state(event.scope, head, rows, cached).valid:
                     raise AuditStorageError("audit_storage_unavailable")
                 if head is None:
                     connection.execute(
@@ -454,14 +471,62 @@ class AuditStore:
                     + _scope_values(event.scope),
                 )
                 connection.commit()
+                self._publish_cache(cache_key, rows)
                 return AuditAppendResult(sequence, event_hash, occurred_text)
             except Exception:
+                with self._cache_lock:
+                    self._validated_rows.clear()
+                    self._cache_bytes = 0
                 connection.rollback()
                 raise
             finally:
                 connection.close()
         except (StorageUnavailableError, sqlite3.Error):
+            with self._cache_lock:
+                self._validated_rows.clear()
+                self._cache_bytes = 0
             raise AuditStorageError("audit_storage_unavailable") from None
+
+    @staticmethod
+    def _cache_key(connection, scope):
+        # The last retained descriptor is the verified database inode, not a path lookup.
+        metadata = os.fstat(connection._descriptors[-1])
+        return (metadata.st_dev, metadata.st_ino, *_scope_values(scope))
+
+    def _publish_cache(self, key, rows):
+        """Publish only committed validation evidence; never store parsed/raw input events.
+
+        Entries are immutable exact SQLite row signatures. Oversize scopes are not cached.
+        Conservative accounting includes all strings/integers, tuples and mapping overhead.
+        Concurrent older commits may replace newer evidence: exact row comparison still
+        makes that a safe cache miss, never an authorization or integrity shortcut.
+        """
+        signatures = {}
+        size = 1024 + sum(sys.getsizeof(part) for part in key)
+        for row in rows:
+            signature = _row_signature(row)
+            size += 256 + sys.getsizeof(signature)
+            size += sum(sys.getsizeof(pair) + sys.getsizeof(pair[1]) for pair in signature)
+            if size > _CACHE_MAX_BYTES:
+                signatures = {}
+                break
+            signatures[row['sequence']] = signature
+        with self._cache_lock:
+            old = self._validated_rows.pop(key, None)
+            if old is not None:
+                self._cache_bytes -= old[1]
+            if not signatures:
+                size = 0
+            while self._validated_rows and (
+                self._cache_bytes + size > _CACHE_MAX_BYTES
+                or len(self._validated_rows) >= _CACHE_MAX_SCOPES
+            ):
+                _, (_, removed_size) = self._validated_rows.popitem(last=False)
+                self._cache_bytes -= removed_size
+            if not signatures:
+                return
+            self._validated_rows[key] = (MappingProxyType(signatures), size)
+            self._cache_bytes += size
 
     def _read_state(self, connection, scope):
         head = self._read_head(connection, scope)
@@ -472,7 +537,7 @@ class AuditStore:
         return head, rows
 
     @staticmethod
-    def _validate_state(scope, head, rows):
+    def _validate_state(scope, head, rows, cached=None):
         """Validate only the supplied transaction snapshot; never reopen storage."""
         bad = AuditVerifyResult(False, "audit_head_mismatch", 0, 0, 0)
         try:
@@ -504,6 +569,11 @@ class AuditStore:
                         or type(row['event_hash']) is not str
                         or not _HASH.fullmatch(row['event_hash'])):
                     return bad
+                # Equality covers every stored column, including retention timestamps.
+                # Type tags prevent SQLite REAL/INTEGER equality from hiding corruption.
+                if cached is not None and cached.get(expected) == _row_signature(row):
+                    previous = row['event_hash']
+                    continue
                 payload = copy_plain_json(json.loads(row['payload']))
                 stamp = parse_timestamp(payload['timestamp'])
                 if (payload['schema'] != AUDIT_SCHEMA

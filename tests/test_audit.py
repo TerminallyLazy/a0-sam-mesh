@@ -383,6 +383,179 @@ class AuditFixTests(unittest.TestCase):
             with self.subTest(timestamp=timestamp), self.assertRaises(ValueError):
                 AuditAppendResult(1, 'a' * 64, timestamp)
 
+class AuditCacheTests(unittest.TestCase):
+    setUp = AuditStoreTests.setUp
+    tearDown = AuditStoreTests.tearDown
 
-if __name__ == "__main__":
+    def test_warm_rows_skip_hashing_but_restart_verifies(self):
+        from helpers import audit
+        for _ in range(8):
+            self.store.append(event())
+        self.store.append(event())
+        with patch.object(audit, '_chain_hash', wraps=audit._chain_hash) as hashing:
+            self.store.append(event())
+            self.assertLessEqual(hashing.call_count, 2)
+        cold = AuditStore(db_path=self.db_path, trusted_root=self.trusted_root, clock=self.clock)
+        with patch.object(audit, '_chain_hash', wraps=audit._chain_hash) as hashing:
+            cold.append(event())
+            self.assertGreaterEqual(hashing.call_count, 11)
+
+    def test_warm_historical_field_tampering_denies(self):
+        fields = {'payload': '{}', 'occurred_at_us': 0, 'occurred_at': 'bad',
+                  'prev_hash': 'a' * 64, 'event_hash': 'b' * 64, 'sequence': 50,
+                  'chat': 'other'}
+        for i, (field, value) in enumerate(fields.items()):
+            with self.subTest(field=field):
+                path = self.trusted_root / str(i) / 'state.sqlite3'
+                store = AuditStore(db_path=path, trusted_root=self.trusted_root, clock=self.clock)
+                for _ in range(3):
+                    store.append(event())
+                with sqlite3.connect(path) as c:
+                    c.execute(f'UPDATE audit_events SET {field} = ? WHERE sequence = 1', (value,))
+                with self.assertRaises(AuditStorageError):
+                    store.append(event())
+                self.assertFalse(store.verify_chain(self.scope).valid)
+
+    def test_rollback_does_not_publish_validation_cache(self):
+        from helpers import audit
+        self.store.append(event())
+        with patch.object(self.store, '_prune', side_effect=sqlite3.OperationalError('test')):
+            with self.assertRaises(AuditStorageError):
+                self.store.append(event())
+        with patch.object(audit, '_chain_hash', wraps=audit._chain_hash) as hashing:
+            self.store.append(event())
+            self.assertEqual(hashing.call_count, 2)
+
+    def test_replacement_and_other_scope_are_cold(self):
+        from helpers import audit
+        for _ in range(3):
+            self.store.append(event())
+        replacement = self.trusted_root / 'replacement.sqlite3'
+        with sqlite3.connect(self.db_path) as source, sqlite3.connect(replacement) as target:
+            source.backup(target)
+        replacement.replace(self.db_path)
+        with patch.object(audit, '_chain_hash', wraps=audit._chain_hash) as hashing:
+            self.store.append(event())
+            self.assertEqual(hashing.call_count, 4)
+        other = Scope('project-a', 'profile-a', 'other')
+        self.store.append(event(scope=other))
+        self.assertEqual(self.store.verify_chain(other).retained_count, 1)
+
+    def test_cache_bounds_and_eviction_force_full_validation(self):
+        from helpers import audit
+        for i in range(6):
+            scope = Scope('project-a', 'profile-a', f'chat-{i}')
+            self.store.append(event(scope=scope))
+            self.store.append(event(scope=scope))
+        self.assertLessEqual(len(self.store._validated_rows), audit._CACHE_MAX_SCOPES)
+        self.assertLessEqual(self.store._cache_bytes, audit._CACHE_MAX_BYTES)
+        first = Scope('project-a', 'profile-a', 'chat-0')
+        with patch.object(audit, '_chain_hash', wraps=audit._chain_hash) as hashing:
+            self.store.append(event(scope=first))
+            self.assertEqual(hashing.call_count, 3)
+        with patch.object(audit, '_CACHE_MAX_BYTES', 1):
+            self.store.append(event(scope=first))
+            self.assertEqual(self.store._cache_bytes, 0)
+
+    def test_unchanged_rows_skip_json_parsing(self):
+        from helpers import audit
+        for _ in range(5):
+            self.store.append(event())
+        with patch.object(audit.json, 'loads', wraps=audit.json.loads) as parsing:
+            self.store.append(event())
+            self.assertEqual(parsing.call_count, 1)
+
+    def test_warm_timestamp_tamper_cannot_prune_or_extend_retention(self):
+        for i, timestamp in enumerate((0, 9000000000000000)):
+            path = self.trusted_root / f'time-{i}' / 'state.sqlite3'
+            store = AuditStore(db_path=path, trusted_root=self.trusted_root, clock=self.clock)
+            for _ in range(3):
+                store.append(event())
+            with sqlite3.connect(path) as c:
+                c.execute('UPDATE audit_events SET occurred_at_us = ? WHERE sequence = 1',
+                          (timestamp,))
+            with self.assertRaises(AuditStorageError):
+                store.append(event())
+            with sqlite3.connect(path) as c:
+                self.assertEqual(c.execute('SELECT COUNT(*) FROM audit_events').fetchone()[0], 3)
+            with self.assertRaises(AuditStorageError):
+                store.list_redacted(self.scope, limit=1)
+
+    def test_uncertain_connection_failure_discards_cache(self):
+        from helpers import audit
+        from helpers.storage import StorageUnavailableError
+        for _ in range(3):
+            self.store.append(event())
+        with patch.object(self.store._storage, 'connect',
+                          side_effect=StorageUnavailableError('storage_unavailable')):
+            with self.assertRaises(AuditStorageError):
+                self.store.append(event())
+        with patch.object(audit, '_chain_hash', wraps=audit._chain_hash) as hashing:
+            self.store.append(event())
+            self.assertEqual(hashing.call_count, 4)
+
+    def test_warm_capacity_append_keeps_lease_writer_responsive(self):
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from helpers.leases import LeaseStore
+        from tests.test_leases import request
+        _seed_retained_chain(self.store, self.scope, self.clock.value)
+        # First append is cold; second has only the new previous tail to validate.
+        self.store.append(event())
+        leases = LeaseStore(db_path=self.db_path, trusted_root=self.trusted_root, clock=self.clock)
+        consume_scope = Scope('project-a', 'profile-a', 'consume')
+        consume_request = request(scope=consume_scope)
+        lease = leases.issue(consume_request, 60, 1)
+        leases.issue(request(scope=self.scope), 60, 1)
+        locked = threading.Event()
+        real_read = self.store._read_state
+
+        def signal_writer(c, scope):
+            locked.set()  # BEGIN IMMEDIATE already owns the shared writer lock.
+            return real_read(c, scope)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            with patch.object(self.store, '_read_state', side_effect=signal_writer):
+                append_job = executor.submit(self.store.append, event())
+                self.assertTrue(locked.wait(5))
+                started = time.perf_counter()
+                consume_job = executor.submit(leases.consume, lease.id, consume_request)
+                revoke_job = executor.submit(leases.revoke_scope, self.scope)
+                self.assertTrue(consume_job.result(timeout=2).allowed)
+                self.assertEqual(revoke_job.result(timeout=2), 1)
+                elapsed = time.perf_counter() - started
+                append_job.result(timeout=2)
+        self.assertLess(elapsed, 1.0)
+        self.assertTrue(self.store.verify_chain(self.scope).valid)
+
+
+def _seed_retained_chain(store, scope, now, count=10_000):
+    """Test-only valid capacity fixture; full sequential retention test stays unchanged."""
+    from helpers.audit import _chain_hash
+    from helpers.storage import ZERO_HASH, timestamp_text, timestamp_us
+    c = store._storage.connect(scope)
+    try:
+        store._initialize(c)
+        c.execute('BEGIN IMMEDIATE')
+        values = (scope.project_name, scope.agent_profile, scope.chat_id)
+        c.execute('INSERT INTO audit_heads VALUES (?, ?, ?, 0, ?, 0, ?, 0)',
+                  values + (ZERO_HASH, ZERO_HASH))
+        previous = ZERO_HASH
+        rows = []
+        for sequence in range(1, count + 1):
+            payload = store._event_payload(event(scope=scope), sequence, timestamp_text(now))
+            digest = _chain_hash(payload, previous)
+            rows.append(values + (sequence, timestamp_us(now), timestamp_text(now),
+                                  json.dumps(payload, sort_keys=True, separators=(',', ':')),
+                                  previous, digest))
+            previous = digest
+        c.executemany('INSERT INTO audit_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', rows)
+        c.execute('UPDATE audit_heads SET head_sequence = ?, head_hash = ?, retained_count = ?',
+                  (count, previous, count))
+        c.commit()
+    finally:
+        c.close()
+
+
+if __name__ == '__main__':
     unittest.main()
