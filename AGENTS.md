@@ -9,6 +9,10 @@
 
 - `helpers/` owns validated domain, configuration, SAM transport, policy, leases, audit, inference, Embassy, and deployment support logic.
 - `tools/` and `prompts/` own the narrow Agent Zero model-tool surface and exact tool schemas.
+- `helpers/gate.py` owns preflight and one-shot dispatch; `decisions.py` owns encrypted five-minute decisions, quota/replay state and offline stop controls. Process restart invalidates encrypted decisions.
+- `helpers/tool_runtime.py` owns bounded project/profile store reuse and per-call client cleanup; `native_tools.py` owns exact runtime schemas, and `tool_output.py` owns bounded history output.
+- `helpers/remote_tools.py` owns source-pinned SAM text-content contracts. Guarded invocation stays disabled while remote annotations cannot be verified; never flip its metadata flag to bypass that blocker.
+- `helpers/uds_transport.py` owns Linux descriptor-pinned connect-time socket validation. Native TCP tools stay unavailable until connected-peer verification is proven.
 - `api/` owns authenticated, CSRF-protected plugin API handlers.
 - `webui/` and `extensions/` own first-class Agent Zero UI surfaces and lifecycle integration.
 - `deploy/` owns the optional, experimental sovereign deployment pack.

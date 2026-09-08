@@ -14,6 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from .domain import TransportConfig
+from .uds_transport import PinnedUnixTransport
 
 MCP_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -228,6 +229,8 @@ def _decode_sse_bytes(body: bytes) -> list[Any]:
     return events
 
 
+
+
 class McpStreamableSession:
     """One MCP Streamable HTTP session with no automatic request replay."""
 
@@ -246,7 +249,7 @@ class McpStreamableSession:
         self._protocol_version: str | None = None
         self._next_id = 1
         transport = (
-            httpx.AsyncHTTPTransport(uds=config.socket_path, retries=0)
+            PinnedUnixTransport(config.socket_path)
             if config.type == "uds"
             else httpx.AsyncHTTPTransport(retries=0)
         )
