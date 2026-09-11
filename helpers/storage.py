@@ -61,10 +61,10 @@ def validate_scope(scope: object) -> Scope:
     if not isinstance(scope, Scope):
         raise TypeError("scope must be a Scope")
     values = (scope.project_name, scope.agent_profile, scope.chat_id)
-    for value in values:
+    for index, value in enumerate(values):
         if (
             type(value) is not str
-            or not value
+            or (index == 2 and not value)
             or len(value.encode("utf-8")) > 512
             or "\x00" in value
             or any(ord(character) < 32 for character in value)
@@ -90,10 +90,7 @@ def _copy_json(value: Any, path: str, depth: int, budget: list[int]) -> Any:
             copied[key] = _copy_json(item, f"{path}.{key}", depth + 1, budget)
         return copied
     if type(value) is list:
-        return [
-            _copy_json(item, f"{path}[]", depth + 1, budget)
-            for item in value
-        ]
+        return [_copy_json(item, f"{path}[]", depth + 1, budget) for item in value]
     if value is None or type(value) in {bool, int}:
         return value
     if type(value) is float:
@@ -177,7 +174,6 @@ class SQLiteStorage:
             raise StorageUnavailableError("storage_unavailable")
         return path
 
-
     def connect(self, scope: Scope) -> sqlite3.Connection:
         """Traverse from / with openat, then retain verified descriptors until close.
 
@@ -193,14 +189,15 @@ class SQLiteStorage:
                 if self._explicit_path is not None:
                     raise ValueError("trusted root required")
                 from helpers import files
+
                 root = Path(files.get_abs_path(files.USER_DIR))
-            if not root.is_absolute() or '..' in path.parts or '..' in root.parts:
+            if not root.is_absolute() or ".." in path.parts or ".." in root.parts:
                 raise ValueError("invalid root")
             path.relative_to(root)
             flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-            parent = os.open('/', flags)
+            parent = os.open("/", flags)
             descriptors.append(parent)
-            current = Path('/')
+            current = Path("/")
             for part in path.parent.parts[1:]:
                 current = current / part
                 try:
@@ -226,36 +223,49 @@ class SQLiteStorage:
                     if current == path.parent:
                         os.fchmod(child, 0o700)
                 parent = child
-            db = os.open(path.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
-                         | os.O_NONBLOCK | os.O_CLOEXEC, 0o600, dir_fd=parent)
+            db = os.open(
+                path.name,
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                0o600,
+                dir_fd=parent,
+            )
             descriptors.append(db)
             metadata = os.fstat(db)
-            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid()
-                    or metadata.st_nlink != 1):
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.geteuid()
+                or metadata.st_nlink != 1
+            ):
                 raise ValueError("unsafe database")
             os.fchmod(db, 0o600)
-            for suffix in ('-wal', '-shm', '-journal'):
+            for suffix in ("-wal", "-shm", "-journal"):
                 try:
                     side = os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
                 except FileNotFoundError:
                     continue
-                if (not stat.S_ISREG(side.st_mode) or side.st_uid != os.geteuid()
-                        or side.st_nlink != 1 or side.st_mode & 0o077):
+                if (
+                    not stat.S_ISREG(side.st_mode)
+                    or side.st_uid != os.geteuid()
+                    or side.st_nlink != 1
+                    or side.st_mode & 0o077
+                ):
                     raise ValueError("unsafe sidecar")
             connection = sqlite3.connect(
-                f'/proc/self/fd/{db}', timeout=BUSY_TIMEOUT_MS / 1000,
-                isolation_level=None, factory=_AnchoredConnection,
+                f"/proc/self/fd/{db}",
+                timeout=BUSY_TIMEOUT_MS / 1000,
+                isolation_level=None,
+                factory=_AnchoredConnection,
             )
             # SQLite resolves the proc fd to the verified inode's current pathname.
-            opened = connection.execute('PRAGMA database_list').fetchone()[2]
+            opened = connection.execute("PRAGMA database_list").fetchone()[2]
             actual = os.stat(opened, follow_symlinks=False)
             if (actual.st_dev, actual.st_ino) != (metadata.st_dev, metadata.st_ino):
                 raise ValueError("database substituted")
             connection.row_factory = sqlite3.Row
-            connection.execute(f'PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}')
-            connection.execute('PRAGMA foreign_keys = ON')
-            connection.execute('PRAGMA synchronous = FULL')
-            if connection.execute('PRAGMA journal_mode = WAL').fetchone()[0] != 'wal':
+            connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA synchronous = FULL")
+            if connection.execute("PRAGMA journal_mode = WAL").fetchone()[0] != "wal":
                 raise ValueError("WAL unavailable")
             connection._descriptors = descriptors
             descriptors = []
@@ -276,6 +286,6 @@ class _AnchoredConnection(sqlite3.Connection):
         try:
             super().close()
         finally:
-            for descriptor in reversed(getattr(self, '_descriptors', [])):
+            for descriptor in reversed(getattr(self, "_descriptors", [])):
                 os.close(descriptor)
             self._descriptors = []

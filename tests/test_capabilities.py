@@ -19,7 +19,7 @@ def config(sidecar: FakeSamSidecar) -> TransportConfig:
 
 class CapabilityProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_current_surface_is_probed_without_recreating_removed_diagnostics(self):
-        from helpers.capabilities import CapabilityProbe, REMOVED_DIAGNOSTIC_TOOLS
+        from helpers.capabilities import REMOVED_DIAGNOSTIC_TOOLS, CapabilityProbe
         from helpers.sam_client import SamClient
 
         async with FakeSamSidecar(server_name="sam-node-mcp") as sidecar:
@@ -61,9 +61,7 @@ class CapabilityProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(feature.status, ProbeStatus.SCHEMA_CHANGED)
         self.assertFalse(report.call_remote_tool_invocation_enabled)
         descriptor = next(
-            tool
-            for tool in report.observed_tools
-            if tool.wire_name == "call_remote_tool"
+            tool for tool in report.observed_tools if tool.wire_name == "call_remote_tool"
         )
         self.assertEqual(
             descriptor.input_schema["properties"]["arguments"]["type"],
@@ -214,8 +212,6 @@ class CapabilityProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(report.call_remote_tool_invocation_enabled)
 
 
-
-
 class CapabilityProbeFixRound1Tests(unittest.IsolatedAsyncioTestCase):
     async def test_canonical_tool_identifier_round_trips_and_bare_name_has_no_fake_uri(self):
         from helpers.sam_client import SamClient
@@ -282,7 +278,7 @@ class CapabilityProbeFixRound1Tests(unittest.IsolatedAsyncioTestCase):
         from helpers.mcp_transport import SamSchemaError
         from helpers.sam_client import SamClient
 
-        for annotations in (
+        for invalid_annotations in (
             [],
             {"priority": float("nan")},
             {"destructiveHint": "true"},
@@ -290,10 +286,10 @@ class CapabilityProbeFixRound1Tests(unittest.IsolatedAsyncioTestCase):
             {"openWorldHint": None},
         ):
             tools = copy.deepcopy(CURRENT_TOOLS)
-            tools[0]["annotations"] = annotations
+            tools[0]["annotations"] = invalid_annotations
             async with FakeSamSidecar(tools=tools) as sidecar:
                 async with SamClient(config(sidecar)) as client:
-                    with self.subTest(annotations=annotations):
+                    with self.subTest(annotations=invalid_annotations):
                         with self.assertRaises(SamSchemaError):
                             await client.list_tools()
 
@@ -346,17 +342,15 @@ class CapabilityProbeFixRound1Tests(unittest.IsolatedAsyncioTestCase):
             lambda schema: schema["properties"].pop("arguments"),
             lambda schema: schema["properties"].pop("required_labels"),
             lambda schema: schema.update({"required": ["peer_id"]}),
-            lambda schema: schema.update(
-                {"required": ["peer_id", "tool_name", "required_labels"]}
-            ),
+            lambda schema: schema.update({"required": ["peer_id", "tool_name", "required_labels"]}),
             lambda schema: schema["properties"]["peer_id"].update({"type": "integer"}),
             lambda schema: schema["properties"]["tool_name"].update({"type": "integer"}),
         )
         for mutate in mutations:
             tools = copy.deepcopy(CURRENT_TOOLS)
-            schema = next(
-                tool for tool in tools if tool["name"] == "call_remote_tool"
-            )["inputSchema"]
+            schema = next(tool for tool in tools if tool["name"] == "call_remote_tool")[
+                "inputSchema"
+            ]
             mutate(schema)
             async with FakeSamSidecar(tools=tools) as sidecar:
                 async with SamClient(config(sidecar)) as client:

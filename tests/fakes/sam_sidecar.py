@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 CURRENT_TOOLS = [
     {
         "name": "send_message",
@@ -189,9 +188,7 @@ class FakeSamSidecar:
     def count_mcp_method(self, method: str) -> int:
         return sum(entry.get("json", {}).get("method") == method for entry in self.received)
 
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if self.uds_path:
             self.uds_connections += 1
         else:
@@ -344,9 +341,7 @@ class FakeSamSidecar:
             headers={} if headers is None else headers,
         )
 
-    async def _write_response(
-        self, writer: asyncio.StreamWriter, response: FakeResponse
-    ) -> None:
+    async def _write_response(self, writer: asyncio.StreamWriter, response: FakeResponse) -> None:
         reason = {
             200: "OK",
             202: "Accepted",

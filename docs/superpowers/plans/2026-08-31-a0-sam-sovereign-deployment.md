@@ -316,3 +316,7 @@ git commit -m "test: certify sovereign deployment lifecycle and network boundary
 ## Sovereign release gate
 
 Sovereign remains experimental until all container negative tests demonstrate no unapproved named TCP egress, direct DNS/UDP/literal-IP bypass fails, Agent Zero never receives the node socket/token, the WebUI bridge does not restore egress, missing/expired credentials fail closed, rollback preserves user and SAM identity state, and the required `sam-box` contracts exist in a published SAM release.
+
+## Current execution assessment
+
+The 2026-09-10 task and release-gate assessment is in [release-readiness](../../release-readiness.md). Historical step checkboxes remain unclaimed where live certification or the planned commit boundary has not occurred. Implementation adaptations and exact source revisions are recorded in [compatibility](../../compatibility.md).

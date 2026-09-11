@@ -662,3 +662,7 @@ git commit -m "test: certify core plugin across agent zero and sam tracks"
 ## Core release gate
 
 Core `1.0.0` can ship when Tasks 1–9 pass, the compatibility report names every disabled SAM capability, zero secrets appear in scans, every mutation path requires a single-use lease, and emergency disconnect works with the SAM node offline.
+
+## Current execution assessment
+
+The 2026-09-10 task and release-gate assessment is in [release-readiness](../../release-readiness.md). Historical step checkboxes remain unclaimed where live certification or the planned commit boundary has not occurred. Implementation adaptations and exact source revisions are recorded in [compatibility](../../compatibility.md).

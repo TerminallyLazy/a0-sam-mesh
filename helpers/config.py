@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import stat
@@ -224,9 +225,7 @@ def _validate_socket_metadata(metadata: os.stat_result) -> None:
     if not stat.S_ISSOCK(metadata.st_mode):
         raise ConfigError("transport.socket_path must be a Unix socket")
     if metadata.st_uid not in {0, os.geteuid()}:
-        raise ConfigError(
-            "transport.socket_path must be owned by root or the Agent Zero user"
-        )
+        raise ConfigError("transport.socket_path must be owned by root or the Agent Zero user")
     if stat.S_IMODE(metadata.st_mode) & 0o077:
         raise ConfigError("transport.socket_path must have safe permissions")
 
@@ -263,9 +262,7 @@ def _validate_existing_socket(
         os.close(descriptor)
 
 
-def _validate_socket_path(
-    value: Any, allowed_roots: tuple[str, ...], *, allow_absent: bool
-) -> str:
+def _validate_socket_path(value: Any, allowed_roots: tuple[str, ...], *, allow_absent: bool) -> str:
     raw_path = _string(value, "transport.socket_path")
     socket_path = Path(raw_path).expanduser()
     if not socket_path.is_absolute():
@@ -289,9 +286,7 @@ def _validate_socket_path(
         metadata = socket_path.lstat()
     except FileNotFoundError:
         if not allow_absent:
-            raise ConfigError(
-                "transport.socket_path is absent while remote authority is enabled"
-            )
+            raise ConfigError("transport.socket_path is absent while remote authority is enabled")
         return str(resolved)
     except OSError as exc:
         raise ConfigError("transport.socket_path cannot be inspected safely") from exc
@@ -304,6 +299,13 @@ def _resolve_secret_name(name: str, context: Any) -> str | None:
         return None
     if not _SECRET_NAME.fullmatch(name):
         raise ConfigError("transport.token_secret_name is not a valid secret name")
+    if name == "SAM_MESH_API_KEY":
+        from models import get_api_key
+
+        token = get_api_key("sam_mesh")
+        if not token or token in {"None", "NA"}:
+            raise ConfigError("SAM Mesh provider credential is not configured")
+        return token
     secrets = _load_secrets_manager(context).load_secrets()
     token = secrets.get(name.upper())
     if not isinstance(token, str) or not token:
@@ -369,6 +371,7 @@ def _parse_transport(
     context: Any,
     allowed_socket_roots: tuple[str, ...],
     allow_absent_socket: bool,
+    resolve_credentials: bool = True,
 ) -> TransportConfig:
     transport = _mapping(value, "transport")
     if "token" in transport:
@@ -391,9 +394,7 @@ def _parse_transport(
         "transport.type",
     )
     base_url = _normalize_base_url(_required(transport, "base_url", "transport"))
-    allowed_origins = _normalize_allowed_origins(
-        transport.get("allowed_origins", [])
-    )
+    allowed_origins = _normalize_allowed_origins(transport.get("allowed_origins", []))
     socket_value = transport.get("socket_path")
     if transport_type == "uds":
         if allowed_origins:
@@ -414,15 +415,19 @@ def _parse_transport(
         "transport.token_secret_name",
         allow_empty=True,
     )
-    token_file = _string(
-        transport.get("token_file", ""), "transport.token_file", allow_empty=True
-    )
+    token_file = _string(transport.get("token_file", ""), "transport.token_file", allow_empty=True)
     if secret_name and token_file:
         raise ConfigError("transport must configure exactly one credential source")
+    if secret_name and not _SECRET_NAME.fullmatch(secret_name):
+        raise ConfigError("invalid_secret_name")
     token = (
-        _resolve_secret_name(secret_name, context)
-        if secret_name
-        else _resolve_token_file(token_file)
+        (
+            _resolve_secret_name(secret_name, context)
+            if secret_name
+            else _resolve_token_file(token_file)
+        )
+        if resolve_credentials
+        else None
     )
     return TransportConfig(
         type=transport_type,
@@ -431,6 +436,30 @@ def _parse_transport(
         token=token,
         allowed_origins=allowed_origins,
     )
+
+
+def validate_storage_config(value):
+    """Validate generic host settings without reading or returning credential material."""
+    try:
+        raw = _mapping(value, "config")
+        if len(json.dumps(raw, allow_nan=False).encode()) > 65536:
+            raise ValueError()
+        _reject_unknown(raw, {"schema", "transport", "passport", "features"}, "config")
+        if raw.get("schema") != CONFIG_SCHEMA:
+            raise ValueError()
+        _parse_passport(_required(raw, "passport", "config"))
+        _parse_features(_required(raw, "features", "config"))
+        _parse_transport(
+            _required(raw, "transport", "config"),
+            context=None,
+            allowed_socket_roots=DEFAULT_ALLOWED_SOCKET_ROOTS,
+            allow_absent_socket=True,
+            resolve_credentials=False,
+        )
+        return json.loads(json.dumps(raw, allow_nan=False))
+    except Exception:
+        # Field names and values may themselves be private or attacker-controlled.
+        raise ConfigError("invalid_sam_config") from None
 
 
 def _parse_passport(value: Any) -> CapabilityPassport:
@@ -470,9 +499,7 @@ def _parse_passport(value: Any) -> CapabilityPassport:
         ),
     )
 
-    inference = _mapping(
-        _required(passport, "inference", "passport"), "passport.inference"
-    )
+    inference = _mapping(_required(passport, "inference", "passport"), "passport.inference")
     _reject_unknown(
         inference,
         {"enabled", "route_mode", "required_labels", "sensitive_data"},
@@ -574,9 +601,7 @@ def _parse_features(value: Any) -> FeatureFlags:
             _required(features, "inbound_publication", "features"),
             "features.inbound_publication",
         ),
-        raw_mcp=_boolean(
-            _required(features, "raw_mcp", "features"), "features.raw_mcp"
-        ),
+        raw_mcp=_boolean(_required(features, "raw_mcp", "features"), "features.raw_mcp"),
     )
 
 

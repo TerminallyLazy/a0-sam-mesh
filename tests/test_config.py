@@ -23,7 +23,6 @@ from helpers.domain import (
     ToolDescriptor,
 )
 
-
 BASE_CONFIG = {
     "schema": "a0.sam.config/v1alpha1",
     "transport": {
@@ -85,9 +84,7 @@ class ConfigValidationTests(unittest.TestCase):
         raw["transport"].pop("token")
         raw["transport"]["socket_path"] = "/tmp/attacker.sock"
         with self.assertRaisesRegex(ConfigError, "allowed socket roots"):
-            resolve_config(
-                fake_agent(), raw=raw, allowed_socket_roots=("/var/run/sam",)
-            )
+            resolve_config(fake_agent(), raw=raw, allowed_socket_roots=("/var/run/sam",))
 
     def test_config_normalizes_any_of_labels(self):
         raw = plugin_config()
@@ -149,9 +146,7 @@ class ConfigValidationTests(unittest.TestCase):
             "http:///missing-host",
         ):
             raw = plugin_config()
-            raw["transport"].update(
-                {"type": "http", "base_url": url, "socket_path": None}
-            )
+            raw["transport"].update({"type": "http", "base_url": url, "socket_path": None})
             with self.subTest(url=url):
                 with self.assertRaisesRegex(ConfigError, "base_url"):
                     resolve_config(fake_agent(), raw=raw)
@@ -190,9 +185,7 @@ class ConfigValidationTests(unittest.TestCase):
 
         with (
             patch("helpers.config._load_plugin_config", return_value=raw) as load,
-            patch(
-                "helpers.config._load_secrets_manager", return_value=secret_manager
-            ) as manager,
+            patch("helpers.config._load_secrets_manager", return_value=secret_manager) as manager,
             patch(
                 "helpers.config._context_project_name", return_value="project-from-a0"
             ) as project,
@@ -299,9 +292,7 @@ class ConfigValidationTests(unittest.TestCase):
 
                 with patch("helpers.config.os.fstat", unowned_fstat):
                     with self.assertRaisesRegex(ConfigError, "owned by root or"):
-                        resolve_config(
-                            fake_agent(), raw=raw, allowed_socket_roots=(directory,)
-                        )
+                        resolve_config(fake_agent(), raw=raw, allowed_socket_roots=(directory,))
             finally:
                 server.close()
 
@@ -320,9 +311,7 @@ class ConfigValidationTests(unittest.TestCase):
                 endpoint.chmod(0o600)
                 raw["transport"]["socket_path"] = str(linked / "node.sock")
                 with self.assertRaisesRegex(ConfigError, "symlinked path component"):
-                    resolve_config(
-                        fake_agent(), raw=raw, allowed_socket_roots=(directory,)
-                    )
+                    resolve_config(fake_agent(), raw=raw, allowed_socket_roots=(directory,))
             finally:
                 server.close()
 
@@ -349,9 +338,7 @@ class ConfigValidationTests(unittest.TestCase):
 
                 with patch("helpers.config.os.open", substitute_parent_then_open):
                     with self.assertRaisesRegex(ConfigError, "symlinked path component"):
-                        resolve_config(
-                            fake_agent(), raw=raw, allowed_socket_roots=(directory,)
-                        )
+                        resolve_config(fake_agent(), raw=raw, allowed_socket_roots=(directory,))
             finally:
                 server.close()
 
@@ -490,9 +477,9 @@ class DomainContractTests(unittest.TestCase):
         cfg = resolve_config(fake_agent(), raw=plugin_config())
         passport = cfg.passport
         self.assertIsInstance(passport, CapabilityPassport)
-        canonical = json.dumps(
-            passport.to_dict(), sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        canonical = json.dumps(passport.to_dict(), sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         self.assertEqual(passport.version_hash(), hashlib.sha256(canonical).hexdigest())
         self.assertEqual(len(passport.version_hash()), 64)
 
@@ -545,14 +532,10 @@ class DomainContractTests(unittest.TestCase):
             descriptor.input_schema["properties"]["items"]["items"]["type"],
             "string",
         )
-        self.assertEqual(
-            descriptor.output_schema["properties"]["ok"]["type"], "boolean"
-        )
+        self.assertEqual(descriptor.output_schema["properties"]["ok"]["type"], "boolean")
         self.assertEqual(descriptor.schema_hash, original_hash)
         with self.assertRaises(TypeError):
-            descriptor.input_schema["properties"]["items"]["items"]["type"] = (
-                "integer"
-            )
+            descriptor.input_schema["properties"]["items"]["items"]["type"] = "integer"
 
     def test_tool_descriptor_rejects_non_json_schemas_and_hash_mismatch(self):
         fields = dict(

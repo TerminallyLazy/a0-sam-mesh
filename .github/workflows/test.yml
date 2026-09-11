@@ -1,45 +1,82 @@
-name: Test
+name: Verify SAM Mesh
 
 "on":
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  unit:
-    name: Agent Zero ${{ matrix.a0_ref }}
+  static:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install lint tooling
+        run: python -m pip install ruff==0.16.0
+      - name: Lint, UI behavior, and secret patterns
+        run: |
+          ruff check .
+          ruff format --check .
+          node --check webui/observatory-store.js
+          node --check webui/settings-store.js
+          node --test tests/test_observatory_store.mjs
+          python scripts/scan-secrets.py
+
+  framework:
+    name: Native Agent Zero (${{ matrix.a0_ref }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
         a0_ref:
-          - 6a6cecff8527b164668c7a6ab2f76b6b1ed7cfa1
+          - b1cbd1f960a1a5c4482b324dcff4742aa67b7a51
           - main
+    env:
+      A0_IMAGE: agent0ai/agent-zero@sha256:db4617788520154de9173c59b581f4f0c6ef7a6c75c01d4c2fbc689793896b10
     steps:
-      - name: Check out SAM Mesh Embassy
-        uses: actions/checkout@v4
-
-      - name: Check out Agent Zero
-        uses: actions/checkout@v4
-        with:
-          repository: agent0ai/agent-zero
-          ref: ${{ matrix.a0_ref }}
-          path: agent-zero
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install test dependencies
-        run: >-
-          python -m pip install -r requirements.txt
-          -r agent-zero/requirements.txt -r agent-zero/requirements.dev.txt
-
-      - name: Run unit tests
+      - uses: actions/checkout@v4
+      - name: Prepare disposable framework and exact commit archive
         env:
-          A0_CHECKOUT: ${{ github.workspace }}/agent-zero
-        run: python -m pytest -m "not integration" -v
+          A0_REF: ${{ matrix.a0_ref }}
+        run: |
+          curl --fail --location --retry 3 "https://codeload.github.com/agent0ai/agent-zero/tar.gz/$A0_REF" -o "$RUNNER_TEMP/a0.tar.gz"
+          git archive --format=zip --output="$RUNNER_TEMP/sam-mesh.zip" HEAD
+          docker run --detach --name sam-ci \
+            --volume "$GITHUB_WORKSPACE:/candidate:ro" \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            --env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+            --env LITELLM_LOCAL_MODEL_COST_MAP=True \
+            --entrypoint /bin/sleep "$A0_IMAGE" infinity
+          docker cp "$RUNNER_TEMP/a0.tar.gz" sam-ci:/tmp/a0.tar.gz
+          docker cp "$RUNNER_TEMP/sam-mesh.zip" sam-ci:/tmp/sam-mesh.zip
+          docker cp scripts/verify-community.py sam-ci:/tmp/verify-community.py
+          docker exec sam-ci sh -c 'mkdir -p /a0; tar -xzf /tmp/a0.tar.gz --strip-components=1 -C /a0; mkdir -p /a0/usr/plugins; chmod 755 /a0/usr; touch /a0/.sam-community-verification'
+          docker exec sam-ci /opt/venv-a0/bin/python -m pip install --target /tmp/test-tools pytest==8.4.2
+          docker network disconnect bridge sam-ci
+      - name: Complete Python suite in the framework runtime
+        run: |
+          docker exec --workdir /candidate --env A0_CHECKOUT=/a0 --env PYTHONPATH=/tmp/test-tools \
+            sam-ci /opt/venv-a0/bin/python -m pytest -q -p no:cacheprovider
+      - name: Native install, scopes, auth, hooks, and uninstall
+        run: |
+          docker exec --workdir /a0 --env PYTHONPATH=/a0 \
+            sam-ci /opt/venv-a0/bin/python /tmp/verify-community.py /tmp/sam-mesh.zip \
+            --report /tmp/native-community-verification.json
+          docker cp sam-ci:/tmp/native-community-verification.json "$RUNNER_TEMP/native-community-verification.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-verification-${{ matrix.a0_ref }}
+          path: ${{ runner.temp }}/native-community-verification.json
+          if-no-files-found: error
+      - name: Remove disposable runtime
+        if: always()
+        run: docker rm --force sam-ci || true

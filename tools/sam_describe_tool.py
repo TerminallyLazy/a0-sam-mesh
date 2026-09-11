@@ -1,6 +1,7 @@
 """Native sam_describe_tool entry point."""
-from helpers.tool import Tool, Response
-from usr.plugins.sam_mesh.helpers.tool_runtime import execute_native, before_native
+
+from helpers.tool import Response, Tool
+from usr.plugins.sam_mesh.helpers.tool_runtime import before_native, execute_native
 
 
 class SamDescribeTool(Tool):
@@ -8,5 +9,5 @@ class SamDescribeTool(Tool):
         await before_native(self)
 
     async def execute(self, **kwargs):
-        message = await execute_native(self, 'sam_describe_tool', kwargs)
+        message = await execute_native(self, "sam_describe_tool", kwargs)
         return Response(message=message, break_loop=False)

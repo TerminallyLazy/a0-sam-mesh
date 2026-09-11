@@ -161,14 +161,14 @@ class LeaseStoreTests(unittest.TestCase):
             Scope("project-a", "profile-b", "chat-a"),
         )
         leases = [
-            self.store.issue(request(scope=scope), ttl_seconds=60, max_uses=1)
-            for scope in scopes
+            self.store.issue(request(scope=scope), ttl_seconds=60, max_uses=1) for scope in scopes
         ]
 
         self.assertEqual(self.store.revoke_scope(scopes[0]), 1)
         self.assertEqual(self.store.revoke_scope(scopes[0]), 0)
-        self.assertEqual(self.store.consume(leases[0].id, request(scope=scopes[0])).reason,
-                         "lease_revoked")
+        self.assertEqual(
+            self.store.consume(leases[0].id, request(scope=scopes[0])).reason, "lease_revoked"
+        )
         for lease, scope in zip(leases[1:], scopes[1:], strict=True):
             self.assertTrue(self.store.consume(lease.id, request(scope=scope)).allowed)
         with self.assertRaises(ValueError):
@@ -188,8 +188,7 @@ class LeaseStoreTests(unittest.TestCase):
             with self.subTest(level=level), self.assertRaises(ValueError):
                 self.store.issue(request(risk_level=level), ttl_seconds=60, max_uses=2)
 
-        lease = self.store.issue(request(), ttl_seconds=60, max_uses=1,
-                                 approver_id="user@example")
+        lease = self.store.issue(request(), ttl_seconds=60, max_uses=1, approver_id="user@example")
         self.assertIsInstance(lease, ApprovalLease)
         self.assertGreaterEqual(len(lease.id), 40)
         self.assertNotIn(lease.id, repr(lease))
@@ -237,9 +236,7 @@ class LeaseStoreTests(unittest.TestCase):
                 db_path=link,
                 trusted_root=self.trusted_root,
                 clock=self.clock,
-            ).issue(
-                request(), ttl_seconds=60, max_uses=1
-            )
+            ).issue(request(), ttl_seconds=60, max_uses=1)
 
         real_parent = Path(self.temporary.name) / "real-parent"
         real_parent.mkdir()
@@ -259,9 +256,7 @@ class LeaseStoreTests(unittest.TestCase):
                 db_path=directory,
                 trusted_root=self.trusted_root,
                 clock=self.clock,
-            ).issue(
-                request(), ttl_seconds=60, max_uses=1
-            )
+            ).issue(request(), ttl_seconds=60, max_uses=1)
 
     def test_storage_failure_denies_with_stable_sanitized_result(self):
         lease = self.store.issue(request(), ttl_seconds=60, max_uses=1)
@@ -276,8 +271,7 @@ class LeaseStoreTests(unittest.TestCase):
     def test_canonical_binding_hashes_are_domain_separated_finite_and_order_independent(self):
         first = argument_binding_hash({"b": [2, 3], "a": 1})
         second = argument_binding_hash({"a": 1, "b": [2, 3]})
-        boundary = argument_binding_hash({"a": 1, "b": [2, 3]},
-                                         boundary_kind="data_boundary")
+        boundary = argument_binding_hash({"a": 1, "b": [2, 3]}, boundary_kind="data_boundary")
         assessment = RiskAssessment(
             RiskLevel.MUTATION,
             True,

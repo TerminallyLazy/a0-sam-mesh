@@ -9,7 +9,6 @@ from pathlib import Path
 from helpers.domain import TransportConfig
 from tests.fakes.sam_sidecar import FakeResponse, FakeSamSidecar
 
-
 TOKEN = "contract-only-sensitive-token"
 
 
@@ -104,8 +103,8 @@ class SamTransportTests(unittest.IsolatedAsyncioTestCase):
                 event = (
                     b": heartbeat\r\n"
                     b"event: message\r\n"
-                    b"data: {\"jsonrpc\":\"2.0\",\r\n"
-                    + f"data: \"id\":{request_id},\"result\":{{\"tools\":[]}}}}\r\n\r\n".encode()
+                    b'data: {"jsonrpc":"2.0",\r\n'
+                    + f'data: "id":{request_id},"result":{{"tools":[]}}}}\r\n\r\n'.encode()
                 )
                 sidecar.override(
                     "/mcp",
@@ -200,9 +199,7 @@ class SamTransportTests(unittest.IsolatedAsyncioTestCase):
 
         async with FakeSamSidecar() as sidecar:
             sidecar.override("/healthz", FakeResponse(200, delay=0.05, body=b"{}"))
-            async with SamClient(
-                http_config(sidecar, token=None), timeout_seconds=0.01
-            ) as client:
+            async with SamClient(http_config(sidecar, token=None), timeout_seconds=0.01) as client:
                 with self.assertRaises(SamConnectivityError):
                     await client.health()
 
@@ -281,17 +278,12 @@ class SamTransportTests(unittest.IsolatedAsyncioTestCase):
                     await client.health()
 
 
-
-
 class SamTransportFixRound1Tests(unittest.IsolatedAsyncioTestCase):
     async def test_initialize_rejects_bool_id_without_committing_session(self):
         from helpers.mcp_transport import SamSchemaError
         from helpers.sam_client import SamClient
 
-        body = (
-            b'{"jsonrpc":"2.0","id":true,"result":'
-            b'{"protocolVersion":"2025-03-26"}}'
-        )
+        body = b'{"jsonrpc":"2.0","id":true,"result":{"protocolVersion":"2025-03-26"}}'
         headers = {
             "Mcp-Session-Id": "must-not-commit",
             "Mcp-Protocol-Version": "2025-03-26",
@@ -312,10 +304,7 @@ class SamTransportFixRound1Tests(unittest.IsolatedAsyncioTestCase):
         from helpers.mcp_transport import SamSchemaError
         from helpers.sam_client import SamClient
 
-        body = (
-            b'{"jsonrpc":"2.0","id":1,"result":'
-            b'{"protocolVersion":"2025-03-26"}}'
-        )
+        body = b'{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26"}}'
         headers = {
             "Mcp-Session-Id": "must-not-commit",
             "Mcp-Protocol-Version": "different-version",
@@ -546,9 +535,7 @@ class SamTransportFixRound2Tests(unittest.IsolatedAsyncioTestCase):
                         with self.assertRaises(SamCallAmbiguous) as raised:
                             await client.call_mcp_tool("get_mesh_info", {})
                         self.assertEqual(raised.exception.phase, "response")
-                        self.assertTrue(
-                            raised.exception.duplicate_execution_possible
-                        )
+                        self.assertTrue(raised.exception.duplicate_execution_possible)
             self.assertEqual(sidecar.count_mcp_method("tools/call"), 1)
 
     async def test_malformed_tool_result_is_ambiguous_and_not_replayed(self):
@@ -584,9 +571,7 @@ class SamTransportFixRound2Tests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(SamConnectivityError) as raised:
                     await client.call_mcp_tool("get_mesh_info", {})
                 self.assertNotIsInstance(raised.exception, SamCallAmbiguous)
-                self.assertFalse(
-                    getattr(raised.exception, "duplicate_execution_possible", False)
-                )
+                self.assertFalse(getattr(raised.exception, "duplicate_execution_possible", False))
         self.assertEqual(sidecar.count_mcp_method("tools/call"), 0)
 
     async def test_explicit_ipv6_and_localhost_ipv6_loopback_are_allowed(self):
@@ -632,6 +617,7 @@ class SamTransportFixRound2Tests(unittest.IsolatedAsyncioTestCase):
             ("https://sam.example:8443",),
         )
         for address in ("127.0.0.1", "::1"):
+
             async def loopback(*_args, address=address):
                 return [(0, 0, 0, "", (address, 8443))]
 

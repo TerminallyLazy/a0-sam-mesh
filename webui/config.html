@@ -1,0 +1,31 @@
+<html><head><meta charset="utf-8"><title>SAM Mesh</title>
+<script type="module" src="/plugins/sam_mesh/webui/settings-store.js"></script>
+<link rel="stylesheet" href="/plugins/sam_mesh/webui/observatory.css">
+</head><body>
+<div x-data class="sam-observatory"><template x-if="$store.samSettings && config?.transport && config?.passport"><div x-init="$store.samSettings.bind(context)" x-destroy="delete context.samMesh">
+<img src="/plugins/sam_mesh/webui/logo.png" width="64" height="64" alt="SAM Mesh logo" style="border-radius: 12px;">
+<h3>SAM Mesh <small>Community preview</small></h3><p>Discovery, destination review, approvals and audit for each chat’s passport.</p>
+<p>Use an existing SAM node. Saving settings never enrolls or publishes a service.</p>
+<label>Transport<select x-model="config.transport.type" @change="if ($event.target.value === 'http') { config.transport.socket_path = ''; } else { config.transport.allowed_origins = []; config.transport.socket_path ||= '/var/run/sam/node.sock'; }"><option value="uds">Unix socket</option><option value="http">HTTP / HTTPS</option></select></label>
+<label>Node URL<input x-model.trim="config.transport.base_url" placeholder="http://sam-node:8080" autocomplete="off"></label>
+<label x-show="config.transport.type === 'uds'">Socket path<input x-model.trim="config.transport.socket_path" placeholder="/var/run/sam/node.sock"></label>
+<label x-show="config.transport.type === 'http'">Secret name (reference only)<input x-model.trim="config.transport.token_secret_name" placeholder="SAM_NODE_TOKEN" autocomplete="off"></label>
+<label x-show="config.transport.type === 'http'">Allowed node origins, one per line<textarea :value="(config.transport.allowed_origins || []).join('\n')" @input="config.transport.allowed_origins = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)" placeholder="http://sam-node:8080"></textarea></label>
+<label>Mode<select x-model="config.passport.mode"><option value="explorer">Explorer</option><option value="guarded_mesh">Guarded Mesh</option><option value="embassy" disabled>Embassy (unavailable)</option><option value="raw_mcp" disabled>Raw MCP (unavailable)</option><option value="sovereign" disabled>Sovereign (unavailable)</option></select></label>
+<label>Maximum outbound data class<select x-model="config.passport.outbound.max_data_class"><option>public</option><option>internal</option><option>confidential</option><option>regulated</option></select></label>
+<label>Allow service URI patterns, one per line<textarea :value="config.passport.outbound.allow_services.join('\n')" @input="config.passport.outbound.allow_services = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"></textarea></label>
+<label>Deny tool URI patterns, one per line<textarea :value="config.passport.outbound.deny_tools.join('\n')" @input="config.passport.outbound.deny_tools = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"></textarea></label>
+<label>Remote mutations<select x-model="config.passport.outbound.remote_mutations"><option value="deny">Deny</option><option value="approval">Require approval</option></select></label>
+<label>Calls per chat<input type="number" min="0" max="1000" x-model.number="config.passport.limits.calls_per_session"></label>
+<label><input type="checkbox" x-model="config.features.remote_calls"> Enable governed remote calls</label>
+<label><input type="checkbox" x-model="config.passport.inference.enabled" @change="config.features.mesh_inference = config.passport.inference.enabled"> Enable mesh inference</label>
+<div x-show="config.passport.inference.enabled">
+<label>Native routing<select x-model="config.passport.inference.route_mode"><option value="automatic">Automatic, with possible failover</option><option value="pinned">Named request form only</option></select></label>
+<label>Required inference labels, one per line<textarea :value="config.passport.inference.required_labels.join('\n')" @input="config.passport.inference.required_labels = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"></textarea></label>
+<p class="sam-note">Any matching label is sufficient. Labels do not identify an exact recipient.</p>
+<label>Non-public named inference<select x-model="config.passport.inference.sensitive_data"><option value="deny">Deny</option><option value="approval">Require destination approval</option></select></label>
+</div>
+<p class="sam-note">Deny rules win. Unknown-risk calls always require single-use approval. An emergency stop remains in effect after settings changes.</p>
+<p class="sam-note">Settings scope: <span x-text="context.projectLabel(context.projectName)"></span> / <span x-text="context.agentProfileLabel(context.agentProfileKey)"></span>. The Observatory uses the active chat’s saved passport.</p>
+<button type="button" class="button" @click="context.samMesh.openObservatory()">Open Mesh Observatory</button>
+</div></template></div></body></html>

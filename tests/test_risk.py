@@ -76,12 +76,16 @@ class RiskClassificationTests(unittest.TestCase):
         self.assertTrue(assessment.requires_single_use_lease)
         self.assertIn("identity:tool:destructive.delete", assessment.evidence)
         self.assertTrue(
-            any(item.startswith("schema:key:") and item.endswith(":financial.amount")
-                for item in assessment.evidence)
+            any(
+                item.startswith("schema:key:") and item.endswith(":financial.amount")
+                for item in assessment.evidence
+            )
         )
         self.assertTrue(
-            any(item.startswith("schema:key:") and item.endswith(":credential.password")
-                for item in assessment.evidence)
+            any(
+                item.startswith("schema:key:") and item.endswith(":credential.password")
+                for item in assessment.evidence
+            )
         )
 
     def test_hostile_keys_never_appear_in_bounded_deterministic_evidence(self):
@@ -149,8 +153,10 @@ class RiskClassificationTests(unittest.TestCase):
 
         self.assertIs(keyed.level, RiskLevel.CREDENTIAL)
         self.assertTrue(
-            any(item.startswith("argument:key:") and item.endswith(":credential.token")
-                for item in keyed.evidence)
+            any(
+                item.startswith("argument:key:") and item.endswith(":credential.token")
+                for item in keyed.evidence
+            )
         )
         self.assertIs(valued.level, RiskLevel.UNKNOWN)
         self.assertEqual(valued.evidence, ())

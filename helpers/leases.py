@@ -267,8 +267,7 @@ class LeaseStore:
             """
         )
         connection.execute(
-            "CREATE INDEX IF NOT EXISTS leases_scope_idx "
-            "ON leases(project, profile, chat, revoked)"
+            "CREATE INDEX IF NOT EXISTS leases_scope_idx ON leases(project, profile, chat, revoked)"
         )
 
     def issue(
@@ -341,32 +340,34 @@ class LeaseStore:
         """Reject malformed selected storage before evaluating authorization precedence."""
         if row is None:
             return
-        for name in ('lease_digest', 'binding_hash'):
+        for name in ("lease_digest", "binding_hash"):
             _hash(row[name], name)
-        scope = validate_scope(Scope(row['project'], row['profile'], row['chat']))
-        for name in ('issued_at_us', 'expires_at_us', 'max_uses', 'use_count', 'revoked'):
+        scope = validate_scope(Scope(row["project"], row["profile"], row["chat"]))
+        for name in ("issued_at_us", "expires_at_us", "max_uses", "use_count", "revoked"):
             if type(row[name]) is not int:
                 raise ValueError("invalid stored integer")
-        issued = parse_timestamp(row['issued_at'])
-        expires = parse_timestamp(row['expires_at'])
-        if (timestamp_us(issued) != row['issued_at_us']
-                or timestamp_us(expires) != row['expires_at_us']
-                or not 1 <= (expires - issued).total_seconds() <= _MAX_TTL_SECONDS
-                or not 1 <= row['max_uses'] <= _MAX_USES
-                or not 0 <= row['use_count'] <= row['max_uses']
-                or row['revoked'] not in (0, 1)):
+        issued = parse_timestamp(row["issued_at"])
+        expires = parse_timestamp(row["expires_at"])
+        if (
+            timestamp_us(issued) != row["issued_at_us"]
+            or timestamp_us(expires) != row["expires_at_us"]
+            or not 1 <= (expires - issued).total_seconds() <= _MAX_TTL_SECONDS
+            or not 1 <= row["max_uses"] <= _MAX_USES
+            or not 0 <= row["use_count"] <= row["max_uses"]
+            or row["revoked"] not in (0, 1)
+        ):
             raise ValueError("invalid stored lease")
-        if row['revoked']:
-            if parse_timestamp(row['revoked_at']) < issued:
+        if row["revoked"]:
+            if parse_timestamp(row["revoked_at"]) < issued:
                 raise ValueError("invalid revocation time")
-        elif row['revoked_at'] is not None:
+        elif row["revoked_at"] is not None:
             raise ValueError("invalid revocation state")
-        _exact_string(row['approver_id'], 'approver_id', optional=True)
+        _exact_string(row["approver_id"], "approver_id", optional=True)
         # A matching request provides the preimage for stored binding metadata.
-        if row['binding_hash'] == request.binding_hash():
+        if row["binding_hash"] == request.binding_hash():
             if scope != request.scope:
                 raise ValueError("corrupt scope metadata")
-            if request.risk_level in _SINGLE_USE_RISKS and row['max_uses'] != 1:
+            if request.risk_level in _SINGLE_USE_RISKS and row["max_uses"] != 1:
                 raise ValueError("corrupt single-use limit")
 
     def consume(self, lease_id: str, request: LeaseRequest) -> LeaseConsumeResult:
@@ -422,25 +423,32 @@ class LeaseStore:
         except (StorageUnavailableError, sqlite3.Error, ValueError, TypeError, OverflowError):
             return LeaseConsumeResult(False, "lease_storage_unavailable")
 
+    def revoke_profile(self, scope: Scope) -> int:
+        return self._revoke(scope, whole_profile=True)
+
     def revoke_scope(self, scope: Scope) -> int:
+        return self._revoke(scope, whole_profile=False)
+
+    def _revoke(self, scope: Scope, *, whole_profile: bool) -> int:
         validated = validate_scope(scope)
         try:
             connection = self._storage.connect(validated)
             try:
                 self._initialize(connection)
                 connection.execute("BEGIN IMMEDIATE")
-                cursor = connection.execute(
-                    """
-                    UPDATE leases SET revoked = 1, revoked_at = ?
-                    WHERE project = ? AND profile = ? AND chat = ? AND revoked = 0
-                    """,
-                    (
-                        timestamp_text(self._storage.now()),
-                        validated.project_name,
-                        validated.agent_profile,
-                        validated.chat_id,
-                    ),
+                sql = (
+                    "UPDATE leases SET revoked = 1, revoked_at = ? "
+                    "WHERE project = ? AND profile = ? AND revoked = 0"
                 )
+                values = (
+                    timestamp_text(self._storage.now()),
+                    validated.project_name,
+                    validated.agent_profile,
+                )
+                if not whole_profile:
+                    sql += " AND chat = ?"
+                    values += (validated.chat_id,)
+                cursor = connection.execute(sql, values)
                 connection.commit()
                 return cursor.rowcount
             except Exception:

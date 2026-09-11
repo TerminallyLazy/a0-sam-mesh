@@ -328,14 +328,10 @@ class CapabilityProbe:
         required_feature_names.append("models")
 
         observed_disabled = tuple(
-            tool.wire_name
-            for tool in tools
-            if _tool_probe_name(tool) not in enabled_tools
+            tool.wire_name for tool in tools if _tool_probe_name(tool) not in enabled_tools
         )
         extra_tools = tuple(
-            tool.wire_name
-            for tool in tools
-            if _tool_probe_name(tool) not in _KNOWN_CURRENT_TOOLS
+            tool.wire_name for tool in tools if _tool_probe_name(tool) not in _KNOWN_CURRENT_TOOLS
         )
         return CompatibilityReport(
             status=_aggregate_status(features, tuple(required_feature_names)),

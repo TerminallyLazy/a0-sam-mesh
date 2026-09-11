@@ -319,3 +319,7 @@ git commit -m "test: certify bounded embassy publication and shutdown"
 ## Embassy release gate
 
 Embassy can enter beta only when no remote request can select a project/profile/tool surface, cross-origin sessions are impossible, limits are enforced under concurrency, publication is health-gated and reversible, withdrawal precedes shutdown, and emergency close works with the SAM node unavailable.
+
+## Current execution assessment
+
+The 2026-09-10 task and release-gate assessment is in [release-readiness](../../release-readiness.md). Historical step checkboxes remain unclaimed where live certification or the planned commit boundary has not occurred. Implementation adaptations and exact source revisions are recorded in [compatibility](../../compatibility.md).

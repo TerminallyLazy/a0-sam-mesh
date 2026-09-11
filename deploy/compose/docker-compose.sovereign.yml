@@ -1,0 +1,63 @@
+name: sam-embassy-sovereign
+services:
+  capability-gate:
+    image: ${A0_IMAGE:-agent0ai/agent-zero:ready}
+    network_mode: none
+    read_only: true
+    entrypoint: [/opt/venv-a0/bin/python, /pack/deploy/scripts/check-capabilities.py]
+    volumes: [../..:/pack:ro]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  sam-node:
+    image: ${SAM_IMAGE:?Set an operator-verified SAM image digest}
+    profiles: [experimental]
+    depends_on:
+      capability-gate: {condition: service_completed_successfully}
+    volumes: [node-state:/state, node-socket:/run/sam-node]
+    security_opt: [no-new-privileges:true]
+  sam-box-a0:
+    image: ${SAM_BOX_IMAGE:?Set an operator-verified SAM BOX image digest}
+    profiles: [experimental]
+    depends_on:
+      capability-gate: {condition: service_completed_successfully}
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes: [node-socket:/run/sam-node, agent-socket:/run/sam-agent]
+    command: [run, --socket, /run/sam-agent/agent.sock, --sidecar-socket, /run/sam-node/node.sock]
+  agent-zero:
+    image: ${A0_IMAGE:-agent0ai/agent-zero:ready}
+    profiles: [experimental]
+    depends_on:
+      capability-gate: {condition: service_completed_successfully}
+    network_mode: none
+    devices: [/dev/net/tun]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
+    volumes: [agent-socket:/run/sam-agent, ui-socket:/run/a0-ui, a0-user:/a0/usr, ../..:/pack:ro]
+    environment:
+      OPENAI_BASE_URL: http://mesh.sam.alt/v1
+      SAM_MCP_URL: http://mesh.sam.alt/mcp
+    entrypoint: [/bin/sh, /pack/deploy/scripts/start-sandbox-network.sh]
+  a0-ui-gateway:
+    image: ${UI_GATEWAY_IMAGE:-nginx:stable-alpine}
+    profiles: [experimental]
+    depends_on:
+      capability-gate: {condition: service_completed_successfully}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [ui-ingress]
+    ports: ["127.0.0.1:${A0_UI_PORT:-50080}:8080"]
+    volumes: [ui-socket:/run/a0-ui:ro, ../ui/nginx.conf:/etc/nginx/nginx.conf:ro]
+    tmpfs: [/tmp]
+networks:
+  ui-ingress: {internal: true}
+volumes:
+  node-state:
+  node-socket:
+  agent-socket:
+  ui-socket:
+  a0-user:

@@ -1,0 +1,3 @@
+# Operator-reviewed template only; no service is advertised.
+version: v1alpha1
+services: []

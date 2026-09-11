@@ -1,59 +1,82 @@
 """Exact native surface and installed framework contracts."""
+
 import importlib.util
 import unittest
 
 
 class ToolAvailabilityTests(unittest.TestCase):
     def test_native_runtime_exists(self):
-        self.assertIsNotNone(importlib.util.find_spec('helpers.native_tools'),
-                             'Nine tools need a real installed runtime')
+        self.assertIsNotNone(
+            importlib.util.find_spec("helpers.native_tools"),
+            "Nine tools need a real installed runtime",
+        )
 
 
 class NativeContractTests(unittest.TestCase):
     def test_exact_surface_and_strict_arguments(self):
         from helpers.native_tools import SCHEMAS, validate_arguments
-        expected = {'sam_mesh_status', 'sam_list_local_services', 'sam_discover_services',
-                    'sam_find_tools', 'sam_describe_tool', 'sam_preflight_tool',
-                    'sam_call_remote_tool', 'sam_list_models', 'sam_route_preview'}
+
+        expected = {
+            "sam_mesh_status",
+            "sam_list_local_services",
+            "sam_discover_services",
+            "sam_find_tools",
+            "sam_describe_tool",
+            "sam_preflight_tool",
+            "sam_call_remote_tool",
+            "sam_list_models",
+            "sam_route_preview",
+        }
         self.assertEqual(set(SCHEMAS), expected)
         for name, schema in SCHEMAS.items():
-            self.assertIs(schema['additionalProperties'], False)
+            self.assertIs(schema["additionalProperties"], False)
             with self.assertRaises(ValueError):
-                validate_arguments(name, {'confirm': True})
-        for value in ({'decision_id': 'x'}, {'decision_id': 'x' * 30, 'arguments': {}},
-                      {'decision_id': 'x' * 30, 'token': 'sentinel'}, {'decision_id': 42}):
+                validate_arguments(name, {"confirm": True})
+        for value in (
+            {"decision_id": "x"},
+            {"decision_id": "x" * 30, "arguments": {}},
+            {"decision_id": "x" * 30, "token": "sentinel"},
+            {"decision_id": 42},
+        ):
             with self.assertRaises(ValueError):
-                validate_arguments('sam_call_remote_tool', value)
-        validate_arguments('sam_call_remote_tool', {'decision_id': 'x' * 30})
+                validate_arguments("sam_call_remote_tool", value)
+        validate_arguments("sam_call_remote_tool", {"decision_id": "x" * 30})
 
     def test_prompts_match_runtime_schemas(self):
         import json
         from pathlib import Path
+
         from helpers.native_tools import SCHEMAS
+
         root = Path(__file__).resolve().parents[1]
         for name, schema in SCHEMAS.items():
-            text = (root / 'prompts' / f'agent.system.tool.{name}.md').read_text()
-            parsed = json.loads(text.split('```json\n')[1].split('```')[0])
+            text = (root / "prompts" / f"agent.system.tool.{name}.md").read_text()
+            parsed = json.loads(text.split("```json\n")[1].split("```")[0])
             self.assertEqual(parsed, schema)
-            self.assertIn('untrusted', text)
+            self.assertIn("untrusted", text)
 
     def test_output_bounds_and_redaction(self):
-        from helpers.tool_output import safe_output, inspect_result
-        from helpers.sam_client import ToolResult
         from helpers.domain import DataClass
-        self.assertEqual(safe_output({'TOKEN': 'sentinel'})['TOKEN'], '[redacted]')
-        self.assertNotIn('sentinel', str(safe_output({'x': 'sentinel'}, token='sentinel')))
-        self.assertEqual(safe_output({'x': 'x' * 20000})['error_code'], 'output_too_large')
-        result = ToolResult(({'type': 'image', 'data': 'secret'},
-                             {'type': 'text', 'text': 'private-sentinel'}), {}, False)
-        self.assertNotIn('private-sentinel', str(inspect_result(
-            result, {}, None, DataClass.INTERNAL)))
-        self.assertNotIn('image', str(inspect_result(result, {}, None, DataClass.PUBLIC)))
+        from helpers.sam_client import ToolResult
+        from helpers.tool_output import inspect_result, safe_output
+
+        self.assertEqual(safe_output({"TOKEN": "sentinel"})["TOKEN"], "[redacted]")
+        self.assertNotIn("sentinel", str(safe_output({"x": "sentinel"}, token="sentinel")))
+        self.assertEqual(safe_output({"x": "x" * 20000})["error_code"], "output_too_large")
+        result = ToolResult(
+            ({"type": "image", "data": "secret"}, {"type": "text", "text": "private-sentinel"}),
+            {},
+            False,
+        )
+        self.assertNotIn(
+            "private-sentinel", str(inspect_result(result, {}, None, DataClass.INTERNAL))
+        )
+        self.assertNotIn("image", str(inspect_result(result, {}, None, DataClass.PUBLIC)))
 
 
 class RuntimeContracts(unittest.TestCase):
     def test_runtime_module_exists(self):
-        self.assertIsNotNone(importlib.util.find_spec('helpers.tool_runtime'))
+        self.assertIsNotNone(importlib.util.find_spec("helpers.tool_runtime"))
 
 
 class InstalledFrameworkTests(unittest.TestCase):
@@ -62,8 +85,9 @@ class InstalledFrameworkTests(unittest.TestCase):
         import subprocess
         import tempfile
         from pathlib import Path
+
         root = Path(__file__).resolve().parents[1]
-        script = r'''
+        script = r"""
 import asyncio, json, sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -127,30 +151,40 @@ async def main():
         assert server.received[-1]['path'] == '/healthz'
     print('INSTALLED_WRAPPERS=9; POLICY_IDENTITIES=9; REAL_UDS_STATUS=1; LOG_SCAN=clean')
 asyncio.run(main())
-'''
+"""
         with tempfile.TemporaryDirectory() as temp:
-            plugins = Path(temp) / 'usr/plugins'
+            plugins = Path(temp) / "usr/plugins"
             plugins.mkdir(parents=True)
-            (plugins / 'sam_mesh').symlink_to(root, target_is_directory=True)
-            result = subprocess.run(['/opt/venv-a0/bin/python', '-c', script, temp],
-                                    cwd='/a0', text=True, capture_output=True, timeout=90,
-                                    env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+            (plugins / "sam_mesh").symlink_to(root, target_is_directory=True)
+            result = subprocess.run(
+                ["/opt/venv-a0/bin/python", "-c", script, temp],
+                cwd="/a0",
+                text=True,
+                capture_output=True,
+                timeout=90,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('INSTALLED_WRAPPERS=9', result.stdout)
+        self.assertIn("INSTALLED_WRAPPERS=9", result.stdout)
 
 
 class RuntimeErrorTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_errors_keep_taxonomy_without_exception_content(self):
+        import json
         from types import SimpleNamespace
         from unittest.mock import patch
+
         from helpers import tool_runtime
-        from helpers.mcp_transport import SamAuthRequired, SamAuthRejected, SamSchemaError
-        import json
-        for exception, code in ((SamAuthRequired, 'auth_required'),
-                                (SamAuthRejected, 'auth_rejected'),
-                                (SamSchemaError, 'schema_changed')):
-            with patch.object(tool_runtime, 'dispatch', side_effect=exception('secret-sentinel')):
+        from helpers.mcp_transport import SamAuthRejected, SamAuthRequired, SamSchemaError
+
+        for exception, code in (
+            (SamAuthRequired, "auth_required"),
+            (SamAuthRejected, "auth_rejected"),
+            (SamSchemaError, "schema_changed"),
+        ):
+            with patch.object(tool_runtime, "dispatch", side_effect=exception("secret-sentinel")):
                 result = await tool_runtime.execute_native(
-                    SimpleNamespace(method=None, agent=None), 'sam_mesh_status', {})
-            self.assertEqual(json.loads(result)['error_code'], code)
-            self.assertNotIn('secret-sentinel', result)
+                    SimpleNamespace(method=None, agent=None), "sam_mesh_status", {}
+                )
+            self.assertEqual(json.loads(result)["error_code"], code)
+            self.assertNotIn("secret-sentinel", result)

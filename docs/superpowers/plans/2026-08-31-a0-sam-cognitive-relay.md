@@ -299,3 +299,7 @@ git commit -m "test: certify cognitive relay across sam release tracks"
 ## Cognitive Relay release gate
 
 Release as beta only when native Agent Zero chat and utility slots pass streaming and tool-call tests, automatic routing copy is truthful, named routes bind exact destination leases, and no provider/node credential appears in browser responses, chat history, logs, or exported diagnostics.
+
+## Current execution assessment
+
+The 2026-09-10 task and release-gate assessment is in [release-readiness](../../release-readiness.md). Historical step checkboxes remain unclaimed where live certification or the planned commit boundary has not occurred. Implementation adaptations and exact source revisions are recorded in [compatibility](../../compatibility.md).

@@ -35,14 +35,12 @@ class RiskAssessment:
         if len(self.evidence) > 64:
             raise ValueError("risk evidence must contain at most 64 entries")
         if any(
-            not isinstance(reason, str)
-            or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", reason)
+            not isinstance(reason, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", reason)
             for reason in self.reasons
         ):
             raise ValueError("risk reasons must be bounded safe identifiers")
         if any(
-            not isinstance(item, str)
-            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", item)
+            not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", item)
             for item in self.evidence
         ):
             raise ValueError("risk evidence must use the bounded safe evidence format")
@@ -247,9 +245,7 @@ def classify(descriptor: ToolDescriptor, arguments: Mapping[str, Any]) -> RiskAs
     matches.extend(_mapping_key_matches(arguments, "argument", ()))
     matches.extend(_annotation_matches(descriptor.annotations))
 
-    evidence_by_level: dict[RiskLevel, set[str]] = {
-        level: set() for level in _RISK_PRECEDENCE
-    }
+    evidence_by_level: dict[RiskLevel, set[str]] = {level: set() for level in _RISK_PRECEDENCE}
     for level, evidence in matches:
         evidence_by_level[level].add(evidence)
 

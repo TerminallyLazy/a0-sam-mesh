@@ -1,0 +1,7 @@
+<div x-data class="right-canvas-surface-panel" data-surface-id="sam-observatory"
+ :class="{ 'is-active': $store.rightCanvas?.isSurfaceVisible('sam-observatory'), 'is-mounted': $store.rightCanvas?.isSurfaceRendered('sam-observatory') }"
+ :aria-hidden="(!$store.rightCanvas?.isSurfaceVisible('sam-observatory')).toString()">
+ <template x-if="$store.rightCanvas?.isSurfaceRendered('sam-observatory')">
+  <x-component path="/plugins/sam_mesh/webui/observatory.html" mode="canvas"></x-component>
+ </template>
+</div>

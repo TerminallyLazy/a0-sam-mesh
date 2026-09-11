@@ -510,7 +510,7 @@ class AuditStore:
             if size > _CACHE_MAX_BYTES:
                 signatures = {}
                 break
-            signatures[row['sequence']] = signature
+            signatures[row["sequence"]] = signature
         with self._cache_lock:
             old = self._validated_rows.pop(key, None)
             if old is not None:
@@ -532,7 +532,8 @@ class AuditStore:
         head = self._read_head(connection, scope)
         rows = connection.execute(
             "SELECT * FROM audit_events WHERE project = ? AND profile = ? AND chat = ? "
-            "ORDER BY sequence LIMIT 10001", _scope_values(scope),
+            "ORDER BY sequence LIMIT 10001",
+            _scope_values(scope),
         ).fetchall()
         return head, rows
 
@@ -543,51 +544,65 @@ class AuditStore:
         try:
             if head is None:
                 return bad if rows else AuditVerifyResult(True, "audit_chain_valid", 0, 0, 0)
-            base, end, count = (head[k] for k in (
-                "base_sequence", "head_sequence", "retained_count",
-            ))
-            if (any(type(v) is not int for v in (base, end, count))
-                    or not 0 <= base <= end < 2**63 - 1
-                    or not 0 <= count <= _MAX_EVENTS
-                    or count != end - base or count != len(rows)
-                    or _scope_values(scope)
-                    != tuple(head[k] for k in ('project', 'profile', 'chat'))):
+            base, end, count = (
+                head[k]
+                for k in (
+                    "base_sequence",
+                    "head_sequence",
+                    "retained_count",
+                )
+            )
+            if (
+                any(type(v) is not int for v in (base, end, count))
+                or not 0 <= base <= end < 2**63 - 1
+                or not 0 <= count <= _MAX_EVENTS
+                or count != end - base
+                or count != len(rows)
+                or _scope_values(scope) != tuple(head[k] for k in ("project", "profile", "chat"))
+            ):
                 return bad
-            for key in ('base_hash', 'head_hash'):
+            for key in ("base_hash", "head_hash"):
                 if type(head[key]) is not str or not _HASH.fullmatch(head[key]):
                     return bad
-            if base == 0 and head['base_hash'] != ZERO_HASH:
+            if base == 0 and head["base_hash"] != ZERO_HASH:
                 return bad
-            previous = head['base_hash']
+            previous = head["base_hash"]
             for expected, row in enumerate(rows, base + 1):
-                if (type(row['sequence']) is not int or row['sequence'] != expected
-                        or tuple(row[k] for k in ('project', 'profile', 'chat'))
-                        != _scope_values(scope)
-                        or row['prev_hash'] != previous):
+                if (
+                    type(row["sequence"]) is not int
+                    or row["sequence"] != expected
+                    or tuple(row[k] for k in ("project", "profile", "chat")) != _scope_values(scope)
+                    or row["prev_hash"] != previous
+                ):
                     return bad
-                if (type(row['payload']) is not str or len(row['payload']) > 4_194_304
-                        or type(row['event_hash']) is not str
-                        or not _HASH.fullmatch(row['event_hash'])):
+                if (
+                    type(row["payload"]) is not str
+                    or len(row["payload"]) > 4_194_304
+                    or type(row["event_hash"]) is not str
+                    or not _HASH.fullmatch(row["event_hash"])
+                ):
                     return bad
                 # Equality covers every stored column, including retention timestamps.
                 # Type tags prevent SQLite REAL/INTEGER equality from hiding corruption.
                 if cached is not None and cached.get(expected) == _row_signature(row):
-                    previous = row['event_hash']
+                    previous = row["event_hash"]
                     continue
-                payload = copy_plain_json(json.loads(row['payload']))
-                stamp = parse_timestamp(payload['timestamp'])
-                if (payload['schema'] != AUDIT_SCHEMA
-                        or type(payload['sequence']) is not int
-                        or payload['sequence'] != expected
-                        or payload['scope'] != dict(zip(('project', 'profile', 'chat'),
-                                                       _scope_values(scope)))
-                        or row['occurred_at'] != payload['timestamp']
-                        or type(row['occurred_at_us']) is not int
-                        or row['occurred_at_us'] != timestamp_us(stamp)
-                        or _chain_hash(payload, previous) != row['event_hash']):
+                payload = copy_plain_json(json.loads(row["payload"]))
+                stamp = parse_timestamp(payload["timestamp"])
+                if (
+                    payload["schema"] != AUDIT_SCHEMA
+                    or type(payload["sequence"]) is not int
+                    or payload["sequence"] != expected
+                    or payload["scope"]
+                    != dict(zip(("project", "profile", "chat"), _scope_values(scope)))
+                    or row["occurred_at"] != payload["timestamp"]
+                    or type(row["occurred_at_us"]) is not int
+                    or row["occurred_at_us"] != timestamp_us(stamp)
+                    or _chain_hash(payload, previous) != row["event_hash"]
+                ):
                     return bad
-                previous = row['event_hash']
-            if previous != head['head_hash']:
+                previous = row["event_hash"]
+            if previous != head["head_hash"]:
                 return bad
             return AuditVerifyResult(True, "audit_chain_valid", base, end, count)
         except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
@@ -607,8 +622,8 @@ class AuditStore:
                     raise AuditStorageError("audit_storage_unavailable")
                 output = []
                 for row in reversed(rows[-limit:]):
-                    payload = _redact(copy_plain_json(json.loads(row['payload'])), set())
-                    payload['integrity_chain_hash'] = row['event_hash']
+                    payload = _redact(copy_plain_json(json.loads(row["payload"])), set())
+                    payload["integrity_chain_hash"] = row["event_hash"]
                     output.append(_freeze_json(payload))
                 connection.commit()
                 return tuple(output)

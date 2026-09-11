@@ -1,0 +1,36 @@
+.sam-observatory { color: var(--color-text); padding: 20px; max-width: 860px; margin: auto; line-height: 1.5; }
+.sam-header, .sam-section-head, .sam-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sam-header h2 { margin: 4px 0; font-size: 1.5rem; letter-spacing: -.02em; }
+.sam-header p, .sam-note, .sam-events p { color: var(--color-text-secondary, #999); font-size: .85rem; }
+.sam-eyebrow { font-size: .66rem; letter-spacing: .12em; color: var(--color-text-secondary, #999); }
+.sam-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--color-border); margin: 20px 0; gap: 4px; }
+.sam-tabs button { background: none; border: none; color: inherit; padding: 12px; border-bottom: 2px solid transparent; cursor: pointer; font: inherit; }
+.sam-tabs button[aria-selected="true"] { border-color: var(--color-text); font-weight: 650; }
+.sam-observatory button:focus-visible, .sam-observatory input:focus-visible, .sam-observatory summary:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; }
+.sam-chip { font-size: .72rem; white-space: nowrap; padding: 3px 8px; border: 1px solid var(--color-border); border-radius: 5px; }
+.sam-facts { display: grid; grid-template-columns: minmax(110px, 30%) 1fr; gap: 12px 18px; padding: 16px 0; border-block: 1px solid var(--color-border); }
+.sam-facts dt { color: var(--color-text-secondary, #999); font-size: .85rem; }
+.sam-facts dd { margin: 0; overflow-wrap: anywhere; }
+.sam-observatory label { display: grid; gap: 6px; margin: 12px 0; font-size: .85rem; }
+.sam-observatory input, .sam-observatory textarea, .sam-observatory select { box-sizing: border-box; width: 100%; background: var(--color-background); color: inherit; border: 1px solid var(--color-border); border-radius: 6px; padding: 10px; font: inherit; }
+.sam-observatory .button { min-height: 36px; padding: 8px 12px; cursor: pointer; }
+.sam-observatory button:disabled { opacity: .45; cursor: default; }
+.sam-observatory details { border: 1px solid var(--color-border); border-radius: 8px; padding: 14px; }
+.sam-observatory summary { cursor: pointer; }
+.sam-code { padding: 14px; max-height: 380px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; border: 1px solid var(--color-border); border-radius: 8px; }
+.sam-review { border: 1px solid var(--color-border); padding: 18px; margin-top: 18px; border-radius: 8px; }
+.sam-review p { font-size: .85rem; }
+.sam-review code { overflow-wrap: anywhere; }
+.sam-events { list-style: none; padding: 0; }
+.sam-events li { border-bottom: 1px solid var(--color-border); padding: 14px 0; }
+.sam-events li > div { display: flex; gap: 12px; align-items: center; }
+.sam-events p { margin: 4px 0; }
+.sam-stop { margin-top: 32px; border-top: 1px solid var(--color-border); padding-top: 18px; }
+.sam-danger { color: #ed9696; border: 1px solid color-mix(in srgb, #ed9696 45%, transparent); }
+.sam-error, .sam-notice { padding: 12px; border-left: 3px solid #edb675; background: color-mix(in srgb, #edb675 8%, transparent); }
+@media (max-width: 480px) { .sam-observatory { padding: 12px; } .sam-facts { grid-template-columns: 1fr; gap: 4px; } .sam-facts dd { margin-bottom: 10px; } .sam-tabs button { padding: 10px 8px; } }
+
+.sam-observatory input[type="checkbox"] { width: auto; justify-self: start; }
+.sam-observatory details + details { margin-top: 12px; }
+.sam-wrap { flex-wrap: wrap; justify-content: start; }
+.sam-observatory textarea:focus-visible, .sam-observatory select:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; }

@@ -1,0 +1,10 @@
+chat:
+  sam_mesh:
+    name: SAM Mesh
+    litellm_provider: openai
+    api_key_mode: optional
+    models_list:
+      endpoint_url: /models
+      format: openai
+    kwargs:
+      a0_api_mode: chat

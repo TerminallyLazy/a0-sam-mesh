@@ -123,9 +123,7 @@ def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _schema_hash(
-    input_schema: Mapping[str, Any], output_schema: Mapping[str, Any] | None
-) -> str:
+def _schema_hash(input_schema: Mapping[str, Any], output_schema: Mapping[str, Any] | None) -> str:
     value = {
         "input_schema": _plain_json(input_schema),
         "output_schema": _plain_json(output_schema),
@@ -238,9 +236,7 @@ class SamClient:
         protocol = result.get("protocolVersion")
         capabilities = _object(result.get("capabilities"), "MCP capabilities")
         instructions = result.get("instructions", "")
-        if not all(
-            isinstance(item, str) and item for item in (name, version, protocol)
-        ):
+        if not all(isinstance(item, str) and item for item in (name, version, protocol)):
             raise SamSchemaError("MCP initialize metadata must contain nonempty strings")
         if not isinstance(instructions, str):
             raise SamSchemaError("MCP instructions must be a string")
@@ -284,9 +280,7 @@ class SamClient:
                 )
             frozen_input = _freeze_json(input_schema, "tool input schema")
             frozen_output = (
-                None
-                if output_schema is None
-                else _freeze_json(output_schema, "tool output schema")
+                None if output_schema is None else _freeze_json(output_schema, "tool output schema")
             )
             frozen_annotations = _freeze_json(annotations, "tool annotations")
             schema_hash = _schema_hash(frozen_input, frozen_output)
@@ -346,9 +340,7 @@ class SamClient:
             if not isinstance(content, list) or not all(
                 isinstance(item, Mapping) for item in content
             ):
-                raise SamSchemaError(
-                    "MCP tool content must be an array of objects"
-                )
+                raise SamSchemaError("MCP tool content must be an array of objects")
             structured = _object(structured, "MCP structured tool result")
             if not isinstance(is_error, bool):
                 raise SamSchemaError("MCP tool isError must be a boolean")

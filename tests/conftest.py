@@ -8,7 +8,6 @@ from typing import Iterator
 
 import pytest
 
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _AT_FDCWD = -100
 _AT_EMPTY_PATH = 0x1000

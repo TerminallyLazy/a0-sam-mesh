@@ -44,12 +44,7 @@ def validate_required_label(value: object) -> str:
     if value.count("=") != 1 or "," in value:
         raise ValueError("required labels must be exact nonempty key=value strings")
     key, label_value = value.split("=", 1)
-    if (
-        not key
-        or not label_value
-        or key != key.strip()
-        or label_value != label_value.strip()
-    ):
+    if not key or not label_value or key != key.strip() or label_value != label_value.strip():
         raise ValueError("required labels must be exact nonempty key=value strings")
     return value
 
@@ -197,9 +192,9 @@ class CapabilityPassport:
         }
 
     def version_hash(self) -> str:
-        canonical = json.dumps(
-            self.to_dict(), sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        canonical = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         return hashlib.sha256(canonical).hexdigest()
 
 
@@ -232,8 +227,11 @@ class ToolDescriptor:
     discovery_source: str
     schema_hash: str
     annotations: Mapping[str, Any] = field(default_factory=dict)
+    annotation_provenance: str = "verified"
 
     def __post_init__(self) -> None:
+        if self.annotation_provenance not in {"verified", "unavailable"}:
+            raise ValueError("invalid annotation provenance")
         input_schema = _freeze_json(self.input_schema, "input_schema")
         if not isinstance(input_schema, Mapping):
             raise TypeError("input_schema must be a JSON object")
@@ -257,7 +255,10 @@ class ToolDescriptor:
     def risk_metadata_hash(self) -> str:
         """Fingerprint immutable risk metadata separately from schema compatibility."""
         canonical = json.dumps(
-            _plain_json(self.annotations),
+            {
+                "annotations": _plain_json(self.annotations),
+                "provenance": self.annotation_provenance,
+            },
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,

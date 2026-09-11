@@ -12,12 +12,12 @@ def test_manifest_is_installable_and_fail_closed():
     defaults = yaml.safe_load((root / "default_config.yaml").read_text())
     assert manifest == {
         "name": "sam_mesh",
-        "title": "A0 SAM Mesh Embassy",
+        "title": "SAM Mesh",
         "description": (
-            "Governed SAM tools, mesh inference, and optional sovereign "
-            "Agent Zero service publication."
+            "Community preview of governed SAM discovery, approved remote tools, "
+            "and native mesh inference for Agent Zero."
         ),
-        "version": "1.0.0",
+        "version": "1.0.0-alpha.1",
         "settings_sections": ["mcp", "external"],
         "per_project_config": True,
         "per_agent_config": True,
@@ -85,15 +85,13 @@ def test_plugin_teardown_preserves_replacement_path(tmp_path: Path):
     assert plugin_path.resolve() == replacement.resolve()
 
 
-def test_a0_checkout_fixture_yields_installed_checkout_and_cleans_up(
-    tmp_path: Path, monkeypatch
-):
+def test_a0_checkout_fixture_yields_installed_checkout_and_cleans_up(tmp_path: Path, monkeypatch):
     from tests.conftest import a0_checkout
 
     checkout = _fake_a0_checkout(tmp_path)
     plugin_path = checkout / "usr" / "plugins" / "sam_mesh"
     monkeypatch.setenv("A0_CHECKOUT", str(checkout))
-    fixture_body = a0_checkout.__pytest_wrapped__.obj()
+    fixture_body = a0_checkout.__wrapped__()
 
     assert next(fixture_body) == checkout.resolve()
     assert plugin_path.is_symlink()
@@ -160,9 +158,7 @@ def test_plugin_pin_failure_preserves_concurrent_substitution(tmp_path: Path, mo
     assert list(plugin_path.parent.iterdir()) == [plugin_path]
 
 
-def test_publish_uses_pinned_inode_if_staged_path_is_replaced(
-    tmp_path: Path, monkeypatch
-):
+def test_publish_uses_pinned_inode_if_staged_path_is_replaced(tmp_path: Path, monkeypatch):
     checkout = _fake_a0_checkout(tmp_path)
     plugin_path = checkout / "usr" / "plugins" / "sam_mesh"
     replacement = tmp_path / "staged-path-substitution"

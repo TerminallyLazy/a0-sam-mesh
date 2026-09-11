@@ -14,6 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from .domain import TransportConfig
+from .tcp_transport import PinnedTcpTransport
 from .uds_transport import PinnedUnixTransport
 
 MCP_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
@@ -84,9 +85,7 @@ def _origin(url: str) -> str:
     rendered_host = f"[{host.lower()}]" if ":" in host else host.lower()
     default_port = 443 if scheme == "https" else 80
     netloc = (
-        rendered_host
-        if parsed.port in {None, default_port}
-        else f"{rendered_host}:{parsed.port}"
+        rendered_host if parsed.port in {None, default_port} else f"{rendered_host}:{parsed.port}"
     )
     return urlunsplit((scheme, netloc, "", "", ""))
 
@@ -107,8 +106,8 @@ async def validate_tcp_origin(
 ) -> tuple[str, ...]:
     """Resolve every TCP address and reject origin drift and forbidden classes.
 
-    This is a pre-connect guard. HTTPX does not expose a portable connected-peer
-    address, so callers must not treat it as complete DNS-rebinding protection.
+    PinnedTcpBackend connects to one returned literal and verifies the connected
+    peer before HTTP writes. Every request uses a new validated connection.
     """
     if config.type != "http":
         return ()
@@ -164,9 +163,7 @@ async def validate_tcp_origin(
         )
         if address.is_loopback:
             if not configured_local:
-                raise SamConnectivityError(
-                    "SAM TCP host resolved to a forbidden address class"
-                )
+                raise SamConnectivityError("SAM TCP host resolved to a forbidden address class")
         elif _address_is_forbidden(address):
             raise SamConnectivityError("SAM TCP host resolved to a forbidden address class")
         rendered = str(address)
@@ -189,10 +186,7 @@ def _machine_policy_denial(value: Any) -> bool:
         str(data.get("code", "")).lower(),
         str(data.get("category", "")).lower(),
     }
-    return bool(
-        markers
-        & {"policy_denied", "permission_denied", "authorization_denied"}
-    )
+    return bool(markers & {"policy_denied", "permission_denied", "authorization_denied"})
 
 
 def _decode_json_bytes(body: bytes) -> Any:
@@ -229,8 +223,6 @@ def _decode_sse_bytes(body: bytes) -> list[Any]:
     return events
 
 
-
-
 class McpStreamableSession:
     """One MCP Streamable HTTP session with no automatic request replay."""
 
@@ -251,7 +243,7 @@ class McpStreamableSession:
         transport = (
             PinnedUnixTransport(config.socket_path)
             if config.type == "uds"
-            else httpx.AsyncHTTPTransport(retries=0)
+            else PinnedTcpTransport(config, resolver)
         )
         timeout = httpx.Timeout(
             timeout_seconds,
@@ -302,10 +294,6 @@ class McpStreamableSession:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _validate_destination(self) -> None:
-        if self._config.type == "http":
-            await validate_tcp_origin(self._config, resolver=self._resolver)
-
     async def _send(
         self,
         method: str,
@@ -316,7 +304,6 @@ class McpStreamableSession:
         allow_empty: bool = False,
         ambiguous_tool_call: bool = False,
     ) -> tuple[httpx.Response, list[Any]]:
-        await self._validate_destination()
         request_headers = dict(headers or {})
         try:
             async with self._client.stream(
@@ -335,6 +322,10 @@ class McpStreamableSession:
                 body = b"".join(chunks)
         except SamError:
             raise
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise SamConnectivityError(
+                "SAM connection failed before HTTP dispatch", phase="connect", dispatched=False
+            ) from exc
         except (httpx.TimeoutException, httpx.TransportError, EOFError, OSError) as exc:
             if ambiguous_tool_call:
                 raise SamCallAmbiguous(
@@ -396,9 +387,7 @@ class McpStreamableSession:
         for field in ("name", "version"):
             value = server_info.get(field)
             if not isinstance(value, str) or not value:
-                raise SamSchemaError(
-                    f"MCP initialize serverInfo.{field} must be a nonempty string"
-                )
+                raise SamSchemaError(f"MCP initialize serverInfo.{field} must be a nonempty string")
         if not isinstance(instructions, str):
             raise SamSchemaError("MCP initialize instructions must be a string")
         return protocol
@@ -472,9 +461,7 @@ class McpStreamableSession:
             if type(response_id) is type(request_id) and response_id == request_id:
                 matching.append(value)
         if len(matching) != 1:
-            raise SamSchemaError(
-                "MCP response did not contain exactly one matching request id"
-            )
+            raise SamSchemaError("MCP response did not contain exactly one matching request id")
         return matching[0]
 
     @staticmethod
@@ -518,16 +505,12 @@ class McpStreamableSession:
             has_result = "result" in message
             has_error = "error" in message
             if has_result == has_error:
-                raise SamSchemaError(
-                    "MCP response must contain exactly one result or error"
-                )
+                raise SamSchemaError("MCP response must contain exactly one result or error")
             if has_error:
                 error = self._validate_error(message["error"])
                 if _machine_policy_denial({"error": error}):
                     raise SamPolicyDenied("SAM policy denied the MCP request")
-                raise SamProviderError(
-                    f"SAM MCP request failed with code {error['code']!r}"
-                )
+                raise SamProviderError(f"SAM MCP request failed with code {error['code']!r}")
             result = message["result"]
             if not isinstance(result, Mapping):
                 raise SamSchemaError("MCP response result must be an object")
