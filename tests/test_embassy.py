@@ -17,6 +17,7 @@ class EmbassyTests(unittest.IsolatedAsyncioTestCase):
             ("type", "a2a"),
             ("project", "../secret"),
             ("agent_tool_policy", ["*"]),
+            ("agent_tool_policy", ["response", "document_query"]),
         ):
             with self.assertRaises(ValueError):
                 EmbassyService.from_dict(dict(definition(), **{field: value}))

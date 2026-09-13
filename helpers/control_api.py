@@ -42,6 +42,9 @@ _INPUTS = {
     "native_mcp_plan": set(),
     "route_preview": {"route"},
     "publication_plan": {"service"},
+    "publication_start": {"service", "acknowledgment"},
+    "publication_status": set(),
+    "publication_close": {"name"},
     "deployment_status": set(),
     "inference_profile": {"model"},
     "inference_probe": {"model", "stream"},
@@ -90,7 +93,26 @@ async def dispatch_control(agent, action, data):
     stores = scoped_stores(scope)
     if action == "emergency_disconnect":
         # Deliberately before endpoint/secret resolution: offline and broken-config safe.
-        return stop_scope(scope, stores)
+        result = stop_scope(scope, stores)
+        from .embassy_runtime import runtime
+
+        await runtime().submit("close_scope", (scope.project_name, scope.agent_profile))
+        return result
+    if action in {"publication_close", "publication_status"}:
+        from .embassy_runtime import deployment_status, runtime
+
+        owner = (scope.project_name, scope.agent_profile)
+        if action == "publication_close":
+            await runtime().submit("close", data["name"], owner)
+            return {
+                "closed": True,
+                "withdrawal_pending": True,
+                "operator_action": "Remove the service from the node configuration and restart the node. Cached advertisements may remain until expiry.",
+            }
+        return {
+            "deployment": deployment_status(),
+            "services": await runtime().submit("status", owner),
+        }
     if action == "audit":
         return {
             "status": "verified_now",
@@ -102,6 +124,10 @@ async def dispatch_control(agent, action, data):
     if action == "revoke":
         stores[0].invalidate(scope, data["decision_id"])
         return {"revoked": True}
+    if action == "deployment_status":
+        from .sovereign import guest_probe
+
+        return await asyncio.to_thread(guest_probe)
     config = resolve_config(agent)
     if action == "resume":
         return resume_scope(scope, stores, data.get("acknowledgment"))
@@ -130,14 +156,52 @@ async def dispatch_control(agent, action, data):
             "sam_discover_services",
             {"type": kind, "name": data.get("query", ""), "limit": 50, "offset": 0},
         )
-    if action == "deployment_status":
-        from .sovereign import unavailable_report
-
-        return unavailable_report()
     if action == "publication_plan":
         from .publication import publication_plan
 
         return publication_plan(data["service"])
+    if action == "publication_start":
+        from .embassy_config import EmbassyService
+        from .embassy_runtime import runtime
+        from .embassy_sessions import cleanup_agent, create_agent_context
+        from .publication import publication_plan
+
+        if data.get("acknowledgment") != "PUBLISH":
+            raise DecisionError("publication_acknowledgment_required")
+        service = EmbassyService.from_dict(data["service"])
+        owner = (scope.project_name, scope.agent_profile)
+        if (service.project, service.agent_profile) != owner:
+            raise DecisionError("service_scope_denied")
+
+        def guard():
+            from agent import AgentContext
+
+            from helpers.plugins import get_enabled_plugins
+
+            if AgentContext.get(agent.context.id) is not agent.context:
+                return False
+            fresh = resolve_config(agent)
+            return (
+                "sam_mesh" in get_enabled_plugins(agent)
+                and fresh.features.inbound_publication
+                and service.name in fresh.passport.inbound.services
+                and (fresh.scope.project_name, fresh.scope.agent_profile) == owner
+                and not stores[0].disabled(scope)
+            )
+
+        if not guard():
+            raise DecisionError("inbound_publication_disabled")
+        # Validate the actual host project/profile/plugin tool boundary before
+        # any service becomes reachable, without sending a model prompt.
+        validation_context = create_agent_context(service)
+        await cleanup_agent(validation_context)
+        await runtime().submit("start", service, owner, guard)
+        return dict(
+            publication_plan(data["service"]),
+            state="healthy_not_published",
+            status="verified_now",
+            services=await runtime().submit("status", owner),
+        )
     if action == "route_preview":
         from .inference import preview_route
 

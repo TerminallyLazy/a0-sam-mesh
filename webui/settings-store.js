@@ -5,6 +5,14 @@ import { toastFrontendError } from "/components/notifications/notification-store
 // The host's pluginSettingsPrototype owns config, scope, saving and reset.
 // Attach only this plugin's modal action to that modal's context instance.
 export const store = createStore("samSettings", {
+  modeChanged(config) {
+    if (config.passport.mode === "sovereign") {
+      Object.assign(config.transport, {
+        type: "http", base_url: "http://mesh.sam.alt", socket_path: "",
+        token_secret_name: "", token_file: "", allowed_origins: ["http://mesh.sam.alt"],
+      });
+    }
+  },
   bind(context) {
     context.samMesh = {
       async openObservatory() {

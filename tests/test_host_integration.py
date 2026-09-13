@@ -33,18 +33,19 @@ app.add_url_rule('/', 'serve_index', lambda: 'Index')
 api.register_api_route(app, threading.RLock())
 client = app.test_client()
 with patch('helpers.plugins.find_plugin_dir', return_value=str(plugin)), patch('helpers.login.get_credentials_hash', return_value='test-authentication'):
-    for name in ('status','catalog','preflight','approve','revoke','audit','emergency_disconnect'):
+    for name in ('status','catalog','preflight','approve','revoke','audit','emergency_disconnect','publication_start','publication_status','publication_close'):
         route = '/api/plugins/sam_mesh/' + name
         assert client.post(route, json={}).status_code == 302
     with client.session_transaction() as session:
         session['authentication'] = 'test-authentication'
-    assert client.post('/api/plugins/sam_mesh/approve', json={}).status_code == 403
+    for name in ('approve','publication_start','publication_status','publication_close'):
+        assert client.post('/api/plugins/sam_mesh/' + name, json={}).status_code == 403
     with client.session_transaction() as session:
         session['csrf_token'] = 'test-csrf'
     response = client.post('/api/plugins/sam_mesh/approve', json={}, headers={'X-CSRF-Token':'test-csrf'})
     assert response.status_code == 200, response.data
     assert response.json['error_code'] == 'context_required', response.data
-print('PROVIDER_MERGE_AND_DISABLE=pass; AUTH=7; CSRF=pass; SANITIZED_API=pass')
+print('PROVIDER_MERGE_AND_DISABLE=pass; AUTH=10; CSRF=pass; SANITIZED_API=pass')
 import asyncio, json
 from types import SimpleNamespace
 from dataclasses import replace

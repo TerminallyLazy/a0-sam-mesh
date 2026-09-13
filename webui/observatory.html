@@ -94,15 +94,25 @@
     <ol class="sam-events"><template x-for="event in s.events" :key="event.sequence"><li><div><strong x-text="event.outcome"></strong><span class="sam-chip" x-text="event.risk_level"></span></div><p x-text="event.timestamp"></p><code x-text="event.error_code || event.destination_alias || 'Local control'"></code></li></template></ol>
   </section>
   <section x-show="s.view === 'Embassy'" aria-label="Embassy publication">
-    <div class="sam-section-head"><h3>Bounded services</h3><span class="sam-chip">Unsupported until verified</span></div>
-    <p>No service is advertised automatically. Publication requires a declared service, verified caller identity, isolation checks, and a healthy broker.</p>
+    <div class="sam-section-head"><h3>Bounded services</h3><span class="sam-chip" x-text="s.embassyRuntime?.deployment?.available ? 'Authenticated gateway configured' : 'Gateway setup required'"></span></div>
+    <p>Each service runs within this project and profile. Allow its name in saved Embassy settings, review its declaration, then start the broker.</p>
+    <template x-for="entry in (s.embassyRuntime?.services || [])" :key="entry.name"><div class="sam-card">
+      <strong x-text="entry.name"></strong><span class="sam-chip" x-text="entry.state.replaceAll('_', ' ')"></span>
+      <p><span x-text="entry.active_sessions"></span> active sessions</p>
+      <button type="button" class="button" @click="s.closePublication(entry.name)" :disabled="s.loading">Close and drain</button>
+    </div></template>
     <details><summary>Review a service declaration</summary>
       <label>Service name<input x-model="s.embassyName" placeholder="research-desk"></label>
       <label>Local project<input x-model="s.embassyProject"></label>
       <label>Agent profile<input x-model="s.embassyProfile"></label>
       <button type="button" class="button" @click="s.planPublication()" :disabled="s.loading">Validate declaration</button>
       <pre class="sam-code" x-show="s.publication" x-text="s.json(s.publication)"></pre>
+      <div x-show="s.publication?.service && s.embassyRuntime?.deployment?.available">
+        <label><input type="checkbox" x-model="s.publicationAck"> I approve this service and its displayed limits.</label>
+        <button type="button" class="button" @click="s.startPublication()" :disabled="s.loading || !s.publicationAck">Start reviewed service</button>
+      </div>
     </details>
+    <p class="sam-note">Apply the generated declaration to the isolated SAM node to advertise it. Closing the broker rejects new calls immediately; remove the node declaration to finish withdrawal.</p>
     <pre class="sam-code" x-show="s.deployment" x-text="s.json(s.deployment)"></pre>
     <p class="sam-note">The optional Sovereign deployment has a separate capability gate. Plugin settings alone do not enforce all network traffic.</p>
   </section>

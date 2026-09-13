@@ -74,6 +74,49 @@ def plugin_config() -> dict:
 
 
 class ConfigValidationTests(unittest.TestCase):
+    def test_sovereign_requires_runtime_proof_before_secret_resolution(self):
+        raw = plugin_config()
+        raw["passport"]["mode"] = "sovereign"
+        raw["transport"].update(
+            type="http",
+            base_url="http://mesh.sam.alt",
+            socket_path="",
+            allowed_origins=["http://mesh.sam.alt"],
+            token_file="/private/token",
+        )
+        with (
+            patch("helpers.sovereign.guest_probe", return_value={"supported": False}),
+            patch(
+                "helpers.config._resolve_token_file", side_effect=AssertionError("credential read")
+            ),
+        ):
+            with self.assertRaisesRegex(ConfigError, "sovereign_certification_required"):
+                resolve_config(fake_agent(), raw=raw)
+
+    def test_sovereign_accepts_only_the_credentialless_boundary(self):
+        raw = plugin_config()
+        raw["passport"]["mode"] = "sovereign"
+        raw["transport"].update(
+            type="http",
+            base_url="http://mesh.sam.alt",
+            socket_path="",
+            allowed_origins=["http://mesh.sam.alt"],
+        )
+        with patch("helpers.sovereign.guest_probe", return_value={"supported": True}):
+            cfg = resolve_config(fake_agent(), raw=raw)
+            self.assertEqual(cfg.transport.base_url, "http://mesh.sam.alt")
+            self.assertIsNone(cfg.transport.token)
+            for change in (
+                {"base_url": "http://127.0.0.1:8080"},
+                {"token_secret_name": "SAM_TOKEN"},
+                {"token_file": "/private/token"},
+                {"allowed_origins": ["http://mesh.sam.alt", "http://other"]},
+            ):
+                changed = copy.deepcopy(raw)
+                changed["transport"].update(change)
+                with self.assertRaisesRegex(ConfigError, "sovereign_boundary_required"):
+                    resolve_config(fake_agent(), raw=changed)
+
     def test_config_rejects_raw_token_and_unmounted_socket(self):
         raw = plugin_config()
         raw["transport"]["token"] = "do-not-leak-this"

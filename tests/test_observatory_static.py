@@ -24,6 +24,9 @@ class ObservatoryTests(unittest.TestCase):
             "revoke",
             "audit",
             "emergency_disconnect",
+            "publication_start",
+            "publication_status",
+            "publication_close",
         ):
             tree = ast.parse((ROOT / "api" / (name + ".py")).read_text())
             classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]

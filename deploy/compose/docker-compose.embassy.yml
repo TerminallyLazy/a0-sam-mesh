@@ -1,0 +1,28 @@
+# Optional override for the certified Sovereign pack. Provision keys with
+# scripts/prepare-embassy.py before startup; keep the signer outside Agent Zero.
+services:
+  sam-node:
+    command: [run, --bind-addr=, --socket-path, /run/sam-node/node.sock, --data-dir, /state, --config, /run/embassy-node.yaml]
+    volumes:
+      - ${EMBASSY_NODE_CONFIG:?Set the reviewed SAM node configuration}:/run/embassy-node.yaml:ro
+  embassy-gateway:
+    image: ${A0_IMAGE:?Set the certified Agent Zero image digest}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    network_mode: service:sam-node
+    depends_on:
+      sam-node: {condition: service_healthy}
+    working_dir: /plugin
+    environment:
+      PYTHONDONTWRITEBYTECODE: '1'
+    entrypoint: [/opt/venv-a0/bin/python, -m, helpers.embassy_gateway]
+    command: [--key-file, /run/embassy-key/private.key, --broker-socket, /run/sam-embassy/broker.sock, --port, '7081']
+    volumes:
+      - ../..:/plugin:ro
+      - ${EMBASSY_SIGNER_DIR:?Set the private operator key directory}:/run/embassy-key:ro
+      - ${EMBASSY_SOCKET_DIR:?Set the owner-only broker socket directory}:/run/sam-embassy:ro
+  agent-zero:
+    volumes:
+      - ${EMBASSY_TRUST_DIR:?Set the public verification key directory}:/run/sam-embassy-trust:ro
+      - ${EMBASSY_SOCKET_DIR:?Set the owner-only broker socket directory}:/run/sam-embassy

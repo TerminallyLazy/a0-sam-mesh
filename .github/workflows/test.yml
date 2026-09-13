@@ -59,7 +59,7 @@ jobs:
           docker cp "$RUNNER_TEMP/a0.tar.gz" sam-ci:/tmp/a0.tar.gz
           docker cp "$RUNNER_TEMP/sam-mesh.zip" sam-ci:/tmp/sam-mesh.zip
           docker cp scripts/verify-community.py sam-ci:/tmp/verify-community.py
-          docker exec sam-ci sh -c 'mkdir -p /a0; tar -xzf /tmp/a0.tar.gz --strip-components=1 -C /a0; mkdir -p /a0/usr/plugins; chmod 755 /a0/usr; touch /a0/.sam-community-verification'
+          docker exec sam-ci sh -c 'mkdir -p /a0; tar -xzf /tmp/a0.tar.gz --strip-components=1 -C /a0; mkdir -p /a0/usr/plugins; chmod 755 /a0/usr /a0/usr/plugins; touch /a0/.sam-community-verification'
           docker exec sam-ci /opt/venv-a0/bin/python -m pip install --target /tmp/test-tools pytest==8.4.2
           docker network disconnect bridge sam-ci
       - name: Complete Python suite in the framework runtime
@@ -80,3 +80,34 @@ jobs:
       - name: Remove disposable runtime
         if: always()
         run: docker rm --force sam-ci || true
+
+  sovereign:
+    name: Sovereign Linux network certification
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    env:
+      A0_IMAGE: agent0ai/agent-zero@sha256:db4617788520154de9173c59b581f4f0c6ef7a6c75c01d4c2fbc689793896b10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch verified published SAM and pinned Agent Zero source
+        run: |
+          mkdir -p "$RUNNER_TEMP/sam-bin"
+          curl --fail --location --retry 3 https://github.com/google/sam/releases/download/v0.1.0-alpha.9/sam_Linux_arm64.tar.gz -o "$RUNNER_TEMP/sam.tar.gz"
+          echo "cf0d2ae56674ba5a4f57165285b230da602a637dc698109145a8a0a0f688b02d  $RUNNER_TEMP/sam.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/sam.tar.gz" -C "$RUNNER_TEMP/sam-bin"
+          curl --fail --location --retry 3 https://codeload.github.com/agent0ai/agent-zero/tar.gz/b1cbd1f960a1a5c4482b324dcff4742aa67b7a51 -o "$RUNNER_TEMP/a0.tar.gz"
+      - name: Build isolated UI firewall initializer
+        run: docker build -t sovereign-ui-network -f deploy/ui/Dockerfile .
+      - name: Certify actual TUN, denied egress, credentials, native UI, and rollback
+        run: |
+          UI_IMAGE=$(docker image inspect sovereign-ui-network --format '{{.Id}}')
+          python3 deploy/scripts/certify-runtime.py \
+            --binary-dir "$RUNNER_TEMP/sam-bin" --image "$A0_IMAGE" \
+            --firewall-image "$UI_IMAGE" --a0-source-tar "$RUNNER_TEMP/a0.tar.gz" \
+            --output "$RUNNER_TEMP/sovereign-certification.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sovereign-linux-certification
+          path: ${{ runner.temp }}/sovereign-certification.json
+          if-no-files-found: error

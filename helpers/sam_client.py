@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -329,6 +330,40 @@ class SamClient:
         arguments: dict[str, Any],
     ) -> ToolResult:
         result = await self.mcp.call_tool(name, arguments)
+        return self._tool_result(result)
+
+    async def call_embassy_tool(self, peer_id, canonical_uri, arguments):
+        """One stateless MCP request through SAM's caller-authenticated HTTP route.
+
+        Embassy's explicit v1 descriptor opts into this contract. Native MCP
+        forwarding cannot be substituted: it discards verified peer identity.
+        """
+        from .embassy_config import BROKER_TOOLS
+
+        parsed = urlsplit(canonical_uri)
+        if (
+            type(peer_id) is not str
+            or not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,128}", peer_id)
+            or parsed.scheme != "mcp"
+            or not re.fullmatch(r"[a-z][a-z0-9-]{2,62}", parsed.netloc)
+            or parsed.path not in {"/" + name for name in BROKER_TOOLS}
+            or parsed.query
+            or parsed.fragment
+            or type(arguments) is not dict
+        ):
+            raise SamSchemaError("invalid_embassy_destination")
+        if urlsplit(self.mcp._config.base_url).hostname == "mesh.sam.alt":
+            raise SamSchemaError("sovereign_pinned_embassy_route_unavailable")
+        result, _ = await self.mcp._request(
+            "tools/call",
+            {"name": parsed.path[1:], "arguments": arguments},
+            include_session=False,
+            endpoint=f"/sam/{peer_id}/mcp/{parsed.netloc}",
+        )
+        return self._tool_result(result)
+
+    @staticmethod
+    def _tool_result(result):
         try:
             result = _object(result, "MCP tool result")
             content = result.get("content", [])

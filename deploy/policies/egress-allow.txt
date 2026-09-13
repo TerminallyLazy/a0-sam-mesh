@@ -1,0 +1,2 @@
+# Default deny. Set exact lower-case DNS names in the operator bundle's egress.allow.
+# This explanatory file is not a second source of policy. IPs/wildcards are refused.

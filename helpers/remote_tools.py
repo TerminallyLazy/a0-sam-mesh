@@ -111,6 +111,16 @@ class RemoteTools:
 
     async def call(self, descriptor, arguments, labels):
         self.check_transport()
+        from .embassy_config import HTTP_CONTRACT_MARKER
+
+        if descriptor.description.startswith(HTTP_CONTRACT_MARKER):
+            # The HTTP proxy retains the exact peer but has no MCP label contract.
+            # A self-described transport never relaxes risk/approval requirements.
+            if labels:
+                raise SamSchemaError("embassy_http_label_contract_unavailable")
+            return await self.client.call_embassy_tool(
+                descriptor.peer_id, descriptor.canonical_uri, arguments
+            )
         # Schema must have been checked during preparation, never a network roundtrip
         # between gate lease consumption and the actual call.
         return await self.client.call_mcp_tool(

@@ -1,63 +1,117 @@
 name: sam-embassy-sovereign
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
 services:
   capability-gate:
-    image: ${A0_IMAGE:-agent0ai/agent-zero:ready}
+    <<: *hardening
+    image: ${A0_IMAGE:?Set the certified Agent Zero image digest}
     network_mode: none
     read_only: true
-    entrypoint: [/opt/venv-a0/bin/python, /pack/deploy/scripts/check-capabilities.py]
-    volumes: [../..:/pack:ro]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    entrypoint: [/opt/venv-a0/bin/python, /pack/deploy/scripts/check-capabilities.py, --receipt, /certification/receipt.json]
+    environment:
+      SOVEREIGN_RUNTIME_IMAGE: ${A0_IMAGE:?Set the certified Agent Zero image digest}
+      SOVEREIGN_UI_IMAGE: ${UI_NETWORK_IMAGE:?Set the certified firewall image digest}
+    volumes:
+      - ../..:/pack:ro
+      - ${A0_SOURCE_DIR:?Set the certified upstream Agent Zero source directory}:/a0:ro
+      - ${SAM_BIN_DIR:?Set the verified published binary directory}:/opt/sam:ro
+      - ${SOVEREIGN_CERTIFICATION_DIR:?Set the operator certification directory}:/certification:ro
   sam-node:
-    image: ${SAM_IMAGE:?Set an operator-verified SAM image digest}
-    profiles: [experimental]
+    <<: *hardening
+    image: ${A0_IMAGE:?Set the certified Agent Zero image digest}
     depends_on:
       capability-gate: {condition: service_completed_successfully}
-    volumes: [node-state:/state, node-socket:/run/sam-node]
-    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, /opt/venv-a0/bin/python, /pack/deploy/healthchecks/socket.py, /run/sam-node/node.sock]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    entrypoint: [/opt/sam/sam-node]
+    command: [run, --bind-addr=, --socket-path, /run/sam-node/node.sock, --data-dir, /state, --config, /pack/deploy/sam-node/sam-node.yaml]
+    volumes:
+      - node-state:/state
+      - node-socket:/run/sam-node
+      - ${SAM_BIN_DIR:?Set the verified published binary directory}:/opt/sam:ro
+      - ../..:/pack:ro
   sam-box-a0:
-    image: ${SAM_BOX_IMAGE:?Set an operator-verified SAM BOX image digest}
-    profiles: [experimental]
+    <<: *hardening
+    image: ${A0_IMAGE:?Set the certified Agent Zero image digest}
     depends_on:
-      capability-gate: {condition: service_completed_successfully}
-    network_mode: none
+      sam-node: {condition: service_healthy}
     read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    volumes: [node-socket:/run/sam-node, agent-socket:/run/sam-agent]
-    command: [run, --socket, /run/sam-agent/agent.sock, --sidecar-socket, /run/sam-node/node.sock]
+    healthcheck:
+      test: [CMD, /opt/venv-a0/bin/python, /pack/deploy/healthchecks/socket.py, /run/sam-agent/agent.sock]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    entrypoint: [/opt/venv-a0/bin/python, /pack/deploy/scripts/boundary.py]
+    command: [--socket, /run/sam-agent/agent.sock, --node-socket, /run/sam-node/node.sock, --bundle, /run/credentials/bundle.yaml, --issuer, '${CREDENTIAL_ISSUER:?Set the trusted issuer}', --audience, '${CREDENTIAL_AUDIENCE:?Set the workload audience}']
+    volumes:
+      - node-socket:/run/sam-node:ro
+      - agent-socket:/run/sam-agent
+      - ${SOVEREIGN_CREDENTIAL_DIR:?Set operator credential directory}:/run/credentials:ro
+      - ${SAM_BIN_DIR:?Set the verified published binary directory}:/opt/sam:ro
+      - ../..:/pack:ro
+    tmpfs: [/run/private:mode=0700]
   agent-zero:
-    image: ${A0_IMAGE:-agent0ai/agent-zero:ready}
-    profiles: [experimental]
+    <<: *hardening
+    image: ${A0_IMAGE:?Set the certified Agent Zero image digest}
     depends_on:
-      capability-gate: {condition: service_completed_successfully}
+      sam-box-a0: {condition: service_healthy}
     network_mode: none
     devices: [/dev/net/tun]
-    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
-    security_opt: [no-new-privileges:true]
-    volumes: [agent-socket:/run/sam-agent, ui-socket:/run/a0-ui, a0-user:/a0/usr, ../..:/pack:ro]
+    volumes:
+      - agent-socket:/run/sam-agent:ro
+      - ui-socket:/run/a0-ui
+      - ${SOVEREIGN_CERTIFICATION_DIR:?Set the operator certification directory}:/run/sam-certification:ro
+      - ${A0_SOURCE_DIR:?Set the certified upstream Agent Zero source directory}:/a0:ro
+      - a0-user:/a0/usr
+      - a0-tmp:/a0/tmp
+      - ${SAM_BIN_DIR:?Set the verified published binary directory}/nano-init:/opt/sam/nano-init:ro
+      - ../scripts:/pack/deploy/scripts:ro
     environment:
+      A0_WEBUI_PORT: '80'
       OPENAI_BASE_URL: http://mesh.sam.alt/v1
       SAM_MCP_URL: http://mesh.sam.alt/mcp
     entrypoint: [/bin/sh, /pack/deploy/scripts/start-sandbox-network.sh]
-  a0-ui-gateway:
-    image: ${UI_GATEWAY_IMAGE:-nginx:stable-alpine}
-    profiles: [experimental]
-    depends_on:
-      capability-gate: {condition: service_completed_successfully}
-    read_only: true
+  a0-ui-network:
+    image: ${UI_NETWORK_IMAGE:?Set the digest of the built firewall initializer image}
     cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETPCAP]
     security_opt: [no-new-privileges:true]
+    read_only: true
     networks: [ui-ingress]
-    ports: ["127.0.0.1:${A0_UI_PORT:-50080}:8080"]
-    volumes: [ui-socket:/run/a0-ui:ro, ../ui/nginx.conf:/etc/nginx/nginx.conf:ro]
-    tmpfs: [/tmp]
+    ports: ['127.0.0.1:${A0_UI_PORT:-50080}:8080']
+    volumes: [../scripts/ui-network.sh:/ui-network.sh:ro]
+    tmpfs: [/run]
+    entrypoint: [/bin/sh, /ui-network.sh]
+    healthcheck:
+      test: [CMD, test, -f, /run/firewall-ready]
+      interval: 1s
+      timeout: 2s
+      retries: 10
+  a0-ui-gateway:
+    <<: *hardening
+    image: ${A0_IMAGE:?Set the certified Agent Zero image digest}
+    depends_on:
+      agent-zero: {condition: service_started}
+      a0-ui-network: {condition: service_healthy}
+    read_only: true
+    network_mode: service:a0-ui-network
+    volumes:
+      - ui-socket:/run/a0-ui:ro
+      - ../scripts/ui-bridge.py:/ui-bridge.py:ro
+    entrypoint: [/opt/venv-a0/bin/python, /ui-bridge.py, gateway, --port, '8080']
 networks:
-  ui-ingress: {internal: true}
+  ui-ingress: {}
 volumes:
   node-state:
   node-socket:
   agent-socket:
   ui-socket:
+  a0-tmp:
   a0-user:
+    external: true
+    name: ${A0_USER_VOLUME:?Set the existing ordinary Agent Zero usr volume}

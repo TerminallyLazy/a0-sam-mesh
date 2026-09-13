@@ -6,6 +6,7 @@ from dataclasses import dataclass, fields
 _NAME = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 _SCOPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 BROKER_TOOLS = ("service_info", "ask_specialist", "finish_session")
+HTTP_CONTRACT_MARKER = "SAM Embassy HTTP v1: "
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ class EmbassyService:
         if (
             type(self.agent_tool_policy) is not tuple
             or not self.agent_tool_policy
-            or any(x not in {"response", "document_query"} for x in self.agent_tool_policy)
+            or self.agent_tool_policy != ("response",)
         ):
             raise ValueError("unsupported_agent_tool_policy")
 

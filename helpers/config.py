@@ -674,6 +674,23 @@ def resolve_config(
     passport = _parse_passport(_required(config, "passport", "config"))
     features = _parse_features(_required(config, "features", "config"))
     passport, features = _apply_mode_constraints(passport, features)
+    if passport.mode is OperatingMode.SOVEREIGN:
+        from .sovereign import guest_probe
+
+        # Never resolve a node credential or instantiate its transport before
+        # proving the deployed boundary. The guest uses only its named facade.
+        if guest_probe().get("supported") is not True:
+            raise ConfigError("sovereign_certification_required")
+        endpoint = _mapping(_required(config, "transport", "config"), "transport")
+        if (
+            endpoint.get("type") != "http"
+            or endpoint.get("base_url") != "http://mesh.sam.alt"
+            or endpoint.get("socket_path") not in (None, "")
+            or endpoint.get("token_file")
+            or endpoint.get("token_secret_name")
+            or endpoint.get("allowed_origins") != ["http://mesh.sam.alt"]
+        ):
+            raise ConfigError("sovereign_boundary_required")
     authority_disabled = (
         passport.mode is OperatingMode.EXPLORER
         and not passport.inference.enabled

@@ -1,0 +1,24 @@
+schema: 1
+sam:
+  release: v0.1.0-alpha.9
+  source: 077a43e2e89e544bc6ecfbf6b4607706490592ad
+  linux_arm64_archive_sha256: cf0d2ae56674ba5a4f57165285b230da602a637dc698109145a8a0a0f688b02d
+  binary_sha256:
+    sam-node: df3f91eae31f2d32f7c82b5fd6b8b96edf1c660accd233fd4c8edacfd9b5ba3a
+    sam-box: e5d82128ec3e3cd2e494fb4f905a455d39c94622eb77bd2051359090423dafaa
+    nano-init: 7e78151d6327f0e1f4f31c938f6b93f08877423397f9bf100b60905918bbebba
+  sam_box_help_sha256: a037d6c0a3d1842352e80c546d4cc01acff64b8c9855310ecee58e9733356094
+  translator: nano-init bundled tun2connect v0.0.1
+agent_zero:
+  image: agent0ai/agent-zero@sha256:db4617788520154de9173c59b581f4f0c6ef7a6c75c01d4c2fbc689793896b10
+  source_archive_sha256: 8f80a12ef0d51624497378f770ec8e31ac90119079e525f9dc4de39e2003b090
+runtime:
+  tested_docker: 29.7.2
+  tested_kernel: 7.0.12-linuxkit
+  local_tun_certified: false
+  reason: Published nano-init refuses kernel fallback tunnel interfaces
+  receipt_required: exact-host complete runtime matrix
+limitations:
+  secret_injection: disabled
+  automatic_credential_rotation: disabled
+  bundle_serves_ingress: disabled; optional Embassy uses separate authenticated UDS

@@ -9,6 +9,7 @@ export const store = createStore("samObservatory", {
   stopping: false, stopConfirm: false, generation: 0, resumeAck: "", kind: "mcp",
   model: "", service: "", message: "", inference: null, inferenceResult: null,
   embassyName: "", embassyProject: "", embassyProfile: "", publication: null, deployment: null,
+  embassyRuntime: null, publicationAck: false,
   nativePlan: null,
   async api(name, data = {}) {
     const context = globalThis.getContext?.() || "";
@@ -31,6 +32,8 @@ export const store = createStore("samObservatory", {
     this.stopConfirm = false;
     this.inference = null; this.inferenceResult = null; this.message = "";
     this.publication = null; this.deployment = null; this.nativePlan = null; this.resumeAck = "";
+    this.embassyRuntime = null; this.publicationAck = false;
+    this.embassyName = ""; this.embassyProject = ""; this.embassyProfile = "";
   },
   async run(action) {
     if (this.loading || this.stopping) return;
@@ -50,7 +53,13 @@ export const store = createStore("samObservatory", {
     await this.run(async () => {
       if (this.view === "Catalog") this.catalog = await this.api("catalog", { query: this.query, kind: this.kind });
       else if (this.view === "Activity") this.events = (await this.api("audit")).events || [];
-      else if (this.view === "Embassy") this.deployment = await this.api("deployment_status");
+      else if (this.view === "Embassy") {
+        this.deployment = await this.api("deployment_status");
+        this.embassyRuntime = await this.api("publication_status");
+        this.node = await this.api("status");
+        this.embassyProject = this.node.scope?.project_name || "";
+        this.embassyProfile = this.node.scope?.agent_profile || "";
+      }
       else this.node = await this.api("status");
     });
   },
@@ -122,9 +131,26 @@ export const store = createStore("samObservatory", {
     });
   },
   async planPublication() {
+    this.publicationAck = false;
     await this.run(async () => { this.publication = await this.api("publication_plan", { service: {
       name: this.embassyName, project: this.embassyProject, agent_profile: this.embassyProfile,
     } }); });
+  },
+  async startPublication() {
+    if (!this.publicationAck || !this.publication?.service) return;
+    const service = structuredClone(this.publication.service);
+    this.publicationAck = false;
+    await this.run(async () => {
+      this.publication = await this.api("publication_start", { service, acknowledgment: "PUBLISH" });
+      this.embassyRuntime = await this.api("publication_status");
+    });
+  },
+  async closePublication(name) {
+    await this.run(async () => {
+      this.publication = await this.api("publication_close", { name });
+      this.embassyRuntime = await this.api("publication_status");
+      this.publicationAck = false;
+    });
   },
   async planNative() {
     await this.run(async () => { this.nativePlan = await this.api("native_mcp_plan"); });

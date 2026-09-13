@@ -1,9 +1,8 @@
-# Current source nests identity and egress. This credential-free sample cannot start
-# an identified sandbox; a platform-issued credential and issuer/audience are required.
-version: v1alpha1
+# Replace with an operator-generated, mode-0600 bundle and credential.
+version: v1
 agent:
-  id: a0-default
-  external_id: a0-default
-  credential: ""
+  id: a0.operator.example
+  external_id: system:serviceaccount:agents:a0
+  credential: /run/credentials/workload.jwt
 egress:
   allow: []

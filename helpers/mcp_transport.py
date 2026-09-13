@@ -481,6 +481,7 @@ class McpStreamableSession:
         params: dict[str, Any],
         *,
         include_session: bool = True,
+        endpoint: str = "/mcp",
     ) -> tuple[dict[str, Any], httpx.Response]:
         request_id = self._next_id
         self._next_id += 1
@@ -494,7 +495,7 @@ class McpStreamableSession:
         try:
             response, values = await self._send(
                 "POST",
-                "/mcp",
+                endpoint,
                 json_body=payload,
                 headers=self._session_headers() if include_session else {},
                 ambiguous_tool_call=tool_call,

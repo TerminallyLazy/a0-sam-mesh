@@ -51,6 +51,22 @@ test("inference approval uses the dedicated endpoint", async () => {
   assert.equal(f.store.acknowledgment, "");
 });
 
+test("Embassy starts exactly the reviewed service and clears acknowledgment", async () => {
+  const calls = [];
+  const f = fixture(async (path, data) => { calls.push({ path, data }); return { services: [] }; });
+  const service = { name: "reviewed-desk", project: "research", agent_profile: "specialist" };
+  f.store.publication = { service };
+  f.store.embassyName = "edited-after-review";
+  f.store.publicationAck = true;
+  await f.store.startPublication();
+  assert.deepEqual(calls[0].data.service, service);
+  assert.equal(calls[0].data.acknowledgment, "PUBLISH");
+  assert.equal(f.store.publicationAck, false);
+  f.switchChat("other-chat");
+  assert.equal(f.store.publication, null);
+  assert.equal(f.store.embassyRuntime, null);
+});
+
 test("closing Observatory clears protected data and rejects an outstanding response", async () => {
   let respond;
   const f = fixture(() => new Promise(resolve => { respond = resolve; }));
@@ -89,4 +105,16 @@ test("settings actions use their owning modal context without changing its confi
   await saved.samMesh.openObservatory();
   assert.equal(opened.length, 1);
   assert.match(errors[1], /Open a chat/);
+});
+
+test("Sovereign selection removes node authority and chooses only the boundary", () => {
+  const settings = new Function("createStore", "openModal", "toastFrontendError", settingsSource + "; return store;")
+    ((_name, value) => value, () => {}, () => {});
+  const config = { passport: { mode: "sovereign" }, transport: {
+    type: "uds", base_url: "http://node:8080", socket_path: "/run/sam/node.sock",
+    token_file: "/run/credentials/token", token_secret_name: "NODE_TOKEN",
+  }};
+  settings.modeChanged(config);
+  assert.deepEqual(config.transport, { type: "http", base_url: "http://mesh.sam.alt",
+    socket_path: "", token_file: "", token_secret_name: "", allowed_origins: ["http://mesh.sam.alt"] });
 });
