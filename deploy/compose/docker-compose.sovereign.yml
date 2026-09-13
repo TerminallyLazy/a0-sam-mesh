@@ -57,6 +57,7 @@ services:
   agent-zero:
     <<: *hardening
     image: ${A0_IMAGE:?Set the certified Agent Zero image digest}
+    working_dir: /a0
     depends_on:
       sam-box-a0: {condition: service_healthy}
     network_mode: none

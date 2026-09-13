@@ -1,104 +1,86 @@
 # Compatibility and evidence
 
-Assessment date: 2026-09-11. Local verification uses the framework interpreter in an isolated
-networkless container. No enrolled SAM mesh or existing Agent Zero user container was started.
-This is the `1.0.0-alpha.1` community preview; full v1 certification remains gated.
+Assessment date: 2026-09-13. SAM Mesh installs as a native Agent Zero community plugin
+without framework patches. Live acceptance uses disposable, separately enrolled SAM peers;
+existing user containers and identities are not part of the certification environment.
 
 ## Revision matrix
 
-| Component | Exact observation | Verification |
+| Component | Pinned version | Evidence |
 | --- | --- | --- |
-| Agent Zero local framework | `6a6cecff8527b164668c7a6ab2f76b6b1ed7cfa1` | Real installed Tool/Response loading, provider merge/removal, Flask auth/CSRF and native LiteLLM/OpenAI calls against local fixtures |
-| Agent Zero upstream main | `b1cbd1f960a1a5c4482b324dcff4742aa67b7a51` | Native installed-community and complete framework-suite release target |
-| SAM earlier plan snapshot | `3224aae8dc962d6e8d4a83c4fa1f2d3e84c6db0f` | Historical design evidence only |
-| SAM protocol source inspected | `787374aa823d289a2aa15ee1791973f438cb295d` | Official MCP, inference, sandbox, bundle and network source inspected; fixture contracts only |
-| SAM latest main observed | `077a43e2e89e544bc6ecfbf6b4607706490592ad` | Comparison changes only `internal/sambox/gateway.go`, `mesh.go`, and `mesh_test.go`; no live certification |
-| SAM published release | `v0.1.0-alpha.9`, published 2026-09-07 | Release metadata observed; binary and enrolled-mesh matrix not exercised |
+| Agent Zero | `b1cbd1f960a1a5c4482b324dcff4742aa67b7a51` | Native ZIP install/uninstall, scoped hooks/APIs, native model and Embassy message loops |
+| Agent Zero current main | Same revision when refreshed September 13 | Separate hosted native integration matrix job |
+| SAM published binaries | `v0.1.0-alpha.9` | Enrolled mesh discovery, real model response, Embassy caller isolation and withdrawal; Sovereign runtime matrix |
+| SAM current main | `1966b79e7c6864876fc34722e78a050f1c23938c` | Independently built node/control plane, enrolled native real-model response and governed Embassy request |
+| Framework image | `agent0ai/agent-zero@sha256:db4617788520154de9173c59b581f4f0c6ef7a6c75c01d4c2fbc689793896b10` | Linux ARM64 framework Python 3.12.4 |
 
-The framework image ID used was
-`sha256:db4617788520154de9173c59b581f4f0c6ef7a6c75c01d4c2fbc689793896b10`.
-Python 3.12.4, HTTPX 0.28.1, HTTPcore 1.0.9, cryptography 50.0.1, jsonschema 4.26.0,
-FastMCP 3.2.4, LiteLLM 1.88.1 and OpenAI 2.41.1 were inspected. The pinned transport uses
-HTTPcore's backend interface; a dependency upgrade needs its connection-boundary tests.
-`scripts/compatibility-report.py` regenerates a dependency report without contacting SAM.
+The framework contains HTTPX 0.28.1, HTTPcore 1.0.9, cryptography 50.0.1, jsonschema 4.26.0,
+FastMCP 3.2.4, LiteLLM 1.88.1 and OpenAI 2.41.1. The TCP transport uses HTTPcore's backend
+interface; upgrades need the connection-boundary tests. `scripts/compatibility-report.py`
+reports installed dependencies without contacting SAM. The plugin's stable version does
+not change the upstream SAM release's alpha designation.
 
-## Observed drift and adaptations
+## Protocol adaptations
 
-1. **Remote risk metadata remains absent.** Current `remoteToolDescription` contains peer,
-   canonical tool name, description, input schema and optional output schema, not annotations
-   or provider labels. The prior blanket execution block is replaced with an explicit
-   `sam-describe/v1` observation contract and an unknown-risk, single-use approval floor.
-   `risk_metadata_verified` remains false. Schema, recipient and passport drift tests remain
-   active; no read-only classification is inferred from absent metadata.
-2. **TCP is now connected-peer verified.** Each new connection resolves approved addresses,
-   dials one numeric address, verifies the actual peer and preserves TLS SNI. A generic or
-   substituted unverified transport is still denied before credentials or discovery. Tests
-   cover wrong peer, address changes, forbidden destinations, no redirection and real local
-   HTTP calls. UDS retains its descriptor-pinned Linux boundary.
-3. **Schema CPU exposure is bounded.** The execution subset excludes regex, references and
-   compositions and limits tree depth, node counts, strings, enum values and schema size.
-   Complex remote schemas remain unsupported instead of running unbounded validators.
-4. **Inference authentication differs by path.** The `/v1` facade treats Authorization as local
-   node authentication and removes it. A named `/sam/<peer>/inference/<service>` proxy forwards
-   Authorization to the provider. Named approved requests therefore use X-Sam-Authentication
-   only and require the exact fresh discovered proxy root. Current SAM appends
-   `/chat/completions` to that root; the plugin does not invent another `/v1` segment.
-5. **Published sandbox contracts evolved.** Current source contains bundle issuer/audience,
-   egress and ingress flags that older plans described as absent. The bundle is nested under
-   `agent` and `egress`. Source presence is not local runtime, TUN, ingress or credential
-   lifecycle certification. Sovereign remains blocked for those unverified dependencies.
-6. **Publication is administrator-managed.** SAM has no dynamic service registration endpoint.
-   A plan cannot claim to advertise a service. The final local origin boundary and an observed
-   administrator-applied registration are required before the publication controller can be
-   integrated. No fabricated registration API is called.
-7. **Verification tooling drift.** pytest 8.4.2 uses `__wrapped__` for the fixture-body test.
-   All asynchronous tests use unittest's isolated async support, so no pytest-asyncio plugin
-   is needed. Ruff rules are explicitly pinned to Python errors, imports and unused names;
-   its formatter is run separately, avoiding version-dependent default rule expansion.
-8. **Upstream host history now remembers response state.** The installed-tool test now uses
-   real `Agent` methods with local construction/state instead of a `SimpleNamespace` agent,
-   retaining its assertion that model-authored arguments already enter host history. No host
-   or runtime plugin workaround is needed.
+- **Missing risk annotations:** SAM's remote descriptors omit risk annotations and provider
+  labels. `risk_metadata_verified` stays false. Every unknown-risk call needs one-use
+  approval, with fresh schema, recipient, passport and payload binding. Bounded schema
+  validation excludes references, regex, composition and excessive size/depth.
+- **Inference authentication:** the `/v1` facade consumes local Authorization. Named
+  `/sam/<peer>/inference/<service>` proxies forward Authorization to providers, so approved
+  named requests use only `X-Sam-Authentication` for node authentication. No extra `/v1`
+  segment is invented. Automatic routes can fail over and use any-of label matching.
+- **Authenticated Embassy:** SAM's MCP forwarding loses caller identity. The separate named
+  HTTP route verifies the mesh caller and replaces `X-Peer-Id`; an isolated operator gateway
+  signs the exact request for the Unix-socket broker. The `SAM Embassy HTTP v1: ` descriptor
+  selects this transport, without changing the unknown-risk approval floor. Anonymous MCP
+  probes cannot execute tools. Static node service registration remains operator-managed.
+- **Bounded specialist schema:** the optional `session_id` is an empty string for a new
+  session. Its published schema stays within the strict execution subset; composition is
+  not enabled merely to accommodate FastMCP's default schema generation.
+- **Published sandbox:** `nano-init` bundles tun2connect. Its exact Go CONNECT header is
+  accepted and stripped by the TCP-only boundary; arbitrary headers remain denied. Its
+  synthetic dual-stack DNS is accepted only for the exact credentialless mesh facade in a
+  verified Sovereign guest. General reserved-address restrictions remain unchanged.
+- **Native startup:** the read-only source is prepared with required empty knowledge
+  directories and the framework runs with `--dockerized=true`. Core source is unchanged.
 
-Primary evidence:
-[SAM MCP source](https://github.com/google/sam/blob/787374aa823d289a2aa15ee1791973f438cb295d/internal/node/mcp_handlers.go),
-[SAM inference facade](https://github.com/google/sam/blob/787374aa823d289a2aa15ee1791973f438cb295d/internal/node/openai_facade.go),
-[SAM sandbox command](https://github.com/google/sam/blob/787374aa823d289a2aa15ee1791973f438cb295d/cmd/sam-box/main.go),
-[SAM release](https://github.com/google/sam/releases/tag/v0.1.0-alpha.9).
+Primary sources: [SAM release](https://github.com/google/sam/releases/tag/v0.1.0-alpha.9),
+[SAM source revision](https://github.com/google/sam/tree/1966b79e7c6864876fc34722e78a050f1c23938c),
+[Agent Zero source revision](https://github.com/agent0ai/agent-zero/tree/b1cbd1f960a1a5c4482b324dcff4742aa67b7a51).
 
-## Native inference matrix
+## Native inference and Embassy acceptance
 
-| Case | Local real-framework fixture | Live SAM release/current main |
-| --- | --- | --- |
-| Streaming and non-streaming chat | Passed | Not run |
-| Function/tool-call response through native `unified_turn` | Passed | Not run |
-| Aggregate model listing | Adapter contract tested | Not run |
-| 401, 403, 404, 413, 429, 503 mapping | Passed | Not run |
-| Extra retries at host, LiteLLM and SDK layers | Zero observed for six error cases | Not run |
-| Exact named proxy, one-use approval, no Authorization forwarding | Guarded component tested | Not run |
-| Offline emergency before next native transmission | Passed | Not run |
-| Full Agent Zero response-tool loop with a real model | Not certified | Not run |
+| Case | Evidence |
+| --- | --- |
+| Streaming, non-streaming and structured function output | Native framework fixtures exercise transport and host `unified_turn` integration |
+| 401, 403, 404, 413, 429, 503 and retry suppression | Native local fixtures; zero extra plugin/host/SDK retries observed |
+| Enrolled mesh model catalog and actual model response | Released and current-main SAM, native `sam_mesh` provider, real `gpt-6-astra`, response-tool `break_loop=true` |
+| Governed specialist invocation | Current-main SAM, actual discovered schema, native preflight/approval/dispatch, real native context and model, one-use replay rejection |
+| Caller/session isolation | Three enrolled identities, cross-peer and cross-service rejection, spoof overwrite, unsigned forwarding denial |
+| Withdrawal and upgrade | Static declarations removed, node restarted with identity preserved, local MCP catalog empty and old route refused; identities preserved across binary upgrade |
 
-Generic host model-search HTTP is outside the plugin's pinned transport. Prefer project
-secrets and the Observatory catalog; see the README. Automatic routing never promises an exact
-recipient. UDS native provider use, full OpenAI compatibility and full model coverage are not
-claimed.
+The real OAuth-backed model used for acceptance supports Agent Zero's JSON response-tool
+path. It rejects structured OpenAI function-tool requests. Structured function compatibility
+is therefore fixture-tested, not certified for that live provider. Model families and
+provider policies are not interchangeable. Generic host model search remains outside this
+plugin's pinned client; prefer the Observatory catalog and project-secret reference.
 
-## Release limits
+## Supported limits
 
-The local suite cannot certify a running mesh, provider policy, model compatibility across SAM
-tags, full host UI lifecycle, real Embassy contexts with malicious callers, or network confinement.
-Raw MCP, automatic native registration, a2a, semantic intent search and peer messaging remain
-unavailable. Embassy requires a verified final-hop origin boundary. Sovereign deliberately cannot
-start. Cold audit verification has work proportional to retained history; warm local performance
-numbers are not a large-history or production latency SLA.
+Embassy v1 permits only the response tool. It uses existing project instructions and a
+selected profile; it has no shell, arbitrary file/URL, attachment or subordinate-agent
+surface. Publication requires the exclusive signing-gateway namespace and an operator-applied
+static node declaration. A healthy broker alone is not a public advertisement.
 
-## Native community installation follow-up
+Sovereign requires the complete Linux runtime certification and a fresh receipt matching the
+host boot, kernel, images, binaries, pack and read-only Agent Zero source. The tested Docker
+Desktop `7.0.12-linuxkit` kernel is unsupported: published nano-init rejects its extra fallback
+interfaces. No fallback to ordinary networking is provided. Pinned peer Embassy outbound
+routes are unavailable through Sovereign's restricted facade; inbound Embassy uses its
+separate signed gateway/socket deployment.
 
-Upstream Agent Zero at `b1cbd1f960a1a5c4482b324dcff4742aa67b7a51` passes actual ZIP install, scoped settings,
-activation, discovery, API and uninstall checks; see [native-community.md](native-community.md).
-Native settings save/reopen and protected form cleanup were browser-verified. No
-core adaptation was necessary. The root MIT license is included and verified
-through native license discovery and the document API. The public alpha repository and
-release are linked from the README; Plugin Index inclusion requires upstream review.
-These checks do not certify external SAM network behavior.
+Raw MCP, automatic host MCP registration, A2A, semantic intent search and peer messaging
+remain outside the supported surface. Cold audit verification scales with retained history;
+warm local performance checks are not production latency guarantees. See
+[release readiness](release-readiness.md) for the exact release evidence.

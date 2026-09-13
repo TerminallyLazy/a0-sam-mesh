@@ -39,22 +39,28 @@ preserves active slots and quotas. Do not edit the database to bypass an uncerta
 
 ## Embassy publication
 
-The UI currently validates a declaration and explains why publication is closed. It cannot
-start or advertise a broker. Before enabling this track, provide an authenticated final hop
-from SAM, enforce the dedicated profile/tool boundary, and verify the three MCP methods.
-SAM currently requires administrator-managed node service configuration; a generated plan
-is not an applied or advertised service.
+Start from an existing project/profile with SAM Mesh enabled. Review the immutable service
+and acknowledge **PUBLISH** in Observatory. A healthy broker is explicitly
+`healthy_not_published`; the operator must apply the reviewed static service declaration
+and verify it from another enrolled peer. SAM has no dynamic registration API.
 
-The lifecycle controller's required order is health → observed advertisement → publish.
-Closure withdraws advertisement before stopping the broker. A failed withdrawal is reported
-as `closed_withdrawal_pending`. Drain rejects new work, waits within its deadline, cancels
-remaining work and removes ephemeral contexts. These component transitions have local tests;
-there is no live publication/upgrade/rollback certification yet.
+For normal withdrawal, remove the SAM node declaration and restart that node before closing
+the broker. Emergency closure stops new admission immediately and reports operator withdrawal
+pending. Cached advertisements may remain until expiry. Drain waits within its deadline,
+cancels remaining work and removes ephemeral contexts. Plugin disable, changed scope or
+revoked inbound permission also stops new admission. Restart never silently republishes.
+Follow [Embassy operations](embassy-operations.md) for the signing gateway and trust mounts.
 
 ## Sovereign deployment
 
-Do not start the experimental pack for production. Its capability gate exits nonzero and its
-bootstrap refuses to substitute ordinary networking for certified confinement. Follow
-`deploy/README.md` to understand the missing certification work. Never add a normal agent
-network, `--insecure-unverified-bundle`, a node token mount, or Docker socket access to get it
-past the gate.
+Use the optional pack only on a Linux host whose full runtime certification reports support.
+Prepare the pinned read-only Agent Zero source, preserve the external user volume, and supply
+separate operator credentials and public certification paths. The tested Docker Desktop
+LinuxKit kernel is unsupported. Never add an ordinary agent network, unverified credentials,
+a node token mount or Docker socket to bypass a failed gate.
+
+[Sovereign operations](sovereign-operations.md) covers issuer/audience verification, explicit
+named egress, isolated UI ingress, renewal, restart and state-preserving rollback. The host's
+receipt expires after 24 hours and after a boot or immutable-input change; rerun certification.
+The rollback script disables SAM Mesh before restoring ordinary Agent Zero networking and
+preserves user data and SAM identity. It does not revive approvals or enroll a new identity.

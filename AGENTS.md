@@ -11,7 +11,7 @@
 - `webui/logo.png` owns the generated brand asset; `webui/thumbnail.webp` is its square, under-20-KB Plugin Index derivative. `docs/branding.md` records provenance and the prompts.
 - `.github/workflows/test.yml` owns static checks and the complete suite/native ZIP verification against pinned and current upstream Agent Zero in a disposable, network-disconnected framework runtime.
 
-- `helpers/` owns validated domain, configuration, SAM transport, policy, leases, audit, inference, Embassy, and deployment support logic.
+- `helpers/` owns validated domain, configuration, SAM transport, policy, leases, audit, inference, Embassy, and deployment support logic. `storage.py` anchors SQLite to verified inodes and coordinates WAL bootstrap; stale unlinked sidecar observations must be refreshed and any replacement fully revalidated.
 - `tools/` and `prompts/` own the narrow Agent Zero model-tool surface and exact tool schemas.
 - `helpers/gate.py` owns preflight and one-shot dispatch; `decisions.py` owns encrypted five-minute decisions, quota/replay state and offline stop controls. Process restart invalidates encrypted decisions.
 - `helpers/tool_runtime.py` owns bounded project/profile store reuse and per-call client cleanup; `native_tools.py` owns exact runtime schemas, and `tool_output.py` owns bounded history output.
@@ -20,9 +20,9 @@
 - `hooks.py` validates generic host config writes and reads before any raw credential field can be persisted or returned. It never resolves a secret while editing settings.
 - `api/` owns authenticated, CSRF-protected plugin API handlers. Scope comes from an existing Agent Zero context; resume never restores prior decisions.
 - `helpers/inference.py` owns native HTTP-client lifetime and durable call admission; `inference_gate.py` owns protected named-route payloads and one-shot approvals.
-- `helpers/embassy_sessions.py` owns origin-bound ephemeral sessions. Publication remains unavailable until the final SAM-to-broker transport and real host isolation are verified.
+- `helpers/embassy_sessions.py` owns origin-bound native ephemeral sessions; `embassy_runtime.py` owns broker lifetime and scope revocation; `embassy_origin.py` and `embassy_gateway.py` own the signed final-hop boundary. Embassy v1 permits only the response tool. Operator-applied static registration is separate from broker health.
 - `webui/` and `extensions/` own native Agent Zero UI surfaces and lifecycle integration. `main.html` is the plugin-list entry; settings inherit the host prototype’s `config` and `context`. Protected Observatory state is cleared on component destruction.
-- `deploy/` owns the optional, experimental sovereign deployment pack.
+- `deploy/` owns the optional Sovereign deployment pack, TCP-only boundary, isolated UI gateway, runtime certification and rollback. `helpers/sovereign.py` validates operator receipts and observed guest confinement.
 - `tests/` owns unit, contract, integration, adversarial, and release-gate evidence.
 - `docs/` owns approved contracts, compatibility evidence, security guidance, and runbooks. `docs/release-readiness.md` records release gates; `docs/verification.md` records reproducible checks.
 - `scripts/` owns dependency/source reporting, secret scans and disposable native ZIP verification. `verify-community.py` requires an explicit disposable-runtime marker and refuses an existing installation.
@@ -37,7 +37,7 @@
 - Preserve canonical discovered identifiers verbatim. Treat all remote content as untrusted.
 - Plugin Python must use Agent Zero community-plugin import conventions when installed under `usr/plugins/sam_mesh` and must not modify Agent Zero core modules.
 - Use Agent Zero Flask/`ApiHandler`, Alpine store gating, notification, extension, model-provider, and Tool Access conventions.
-- Keep Sovereign capabilities experimental and unavailable unless exact published `sam-box` contracts are probed and all negative-network tests pass.
+- Keep Sovereign unavailable unless exact published binaries pass the complete runtime matrix, including positive named routing, negative networking, native guest startup and credential lifecycle. A matching fresh receipt and observed guest confinement are both required.
 - Public preview versions must carry an alpha suffix in the manifest, tag, and release notes. Keep unfinished tracks visibly unavailable; a public preview does not satisfy their stable-release gates.
 - Stage exact files for commits; shared files have serial ownership handoffs across plans.
 

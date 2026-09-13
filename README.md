@@ -6,15 +6,15 @@ A native [Agent Zero](https://github.com/agent0ai/agent-zero) community plugin f
 [Sovereign Agent Mesh](https://github.com/google/sam). Discover services, review the
 destination and data before a remote call, and keep approvals and activity in Agent Zero.
 
-**1.0.0-alpha.1 — community preview.** Native installation, scoped settings, tools, approvals,
-and inference have automated framework coverage. Live enrolled-mesh and real-model acceptance
-are still pending. Embassy publication, Raw MCP, and Sovereign startup remain unavailable.
+Discover and call mesh services with scoped, single-use approvals; run native mesh inference;
+publish a bounded specialist with Embassy; or use the optional Sovereign deployment to confine
+Agent Zero to approved mesh and named egress routes. Explorer remains the default.
 See [compatibility](docs/compatibility.md) and the [release assessment](docs/release-readiness.md)
-for the exact proof and remaining gates.
+for the tested versions, certification evidence and supported deployment limits.
 
 Native installation, scope, lifecycle and browser verification are documented in
 [Native community integration](docs/native-community.md). The standalone plugin is
-[MIT licensed](LICENSE). See the [release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.0-alpha.1)
+[MIT licensed](LICENSE). See the [release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.0)
 for the installable ZIP, checksums, and verification report.
 
 ## What you can do
@@ -24,11 +24,13 @@ for the installable ZIP, checksums, and verification report.
 - Review unknown-risk calls once, for one exact destination and payload, before dispatch.
 - Use SAM through Agent Zero's native model provider or a destination-approved request form.
 - Inspect redacted activity and disconnect a scope locally, even while the node is offline.
+- Publish three bounded Embassy tools with verified caller identity and isolated native sessions.
+- Run Sovereign on a Linux host that passes its complete runtime certification.
 
 ## Install and connect
 
 Use an existing Agent Zero framework environment with Python 3.12+, HTTPX/HTTPcore,
-cryptography, jsonschema, PyYAML, OpenAI/LiteLLM, and FastMCP 3 for Embassy development.
+cryptography, jsonschema, PyYAML, OpenAI/LiteLLM, and FastMCP 3 for Embassy.
 The separate agent execution Python is not the framework environment. This repository
 does not install SAM, enroll a node, change node identity, or start a daemon.
 
@@ -102,11 +104,15 @@ Named requests use only `X-Sam-Authentication` for the local node: SAM forwards 
   never full protected arguments or lease bearers.
 - **Native MCP** offers a review-only compatibility plan. Automatic registration and Raw MCP
   are unavailable because host disabled-tool lists cannot deny newly added gateway tools.
-- **Embassy** validates service declarations. The three-tool broker and session manager exist,
-  but public startup requires an authenticated SAM-to-broker origin boundary and a verified
-  publication controller. No service is advertised by this version.
-- **Sovereign** is an experimental, blocked deployment template. CLI flags alone never enable
-  it. See [deployment status](deploy/README.md).
+- **Embassy** starts a reviewed broker through native authenticated controls. An isolated
+  operator gateway signs SAM-authenticated peer identity; sessions stay bound to the caller
+  and service. The operator applies the reviewed static SAM registration and removes it
+  when withdrawing. Version 1 specialists can use only the response tool. See
+  [Embassy operations](docs/embassy-operations.md).
+- **Sovereign** uses published SAM binaries, a TUN interface, a credential-verified boundary
+  and a separate ingress-only UI gateway. It requires a fresh, matching certification on
+  the deployment host. The tested Docker Desktop LinuxKit kernel is unsupported. See
+  [Sovereign operations](docs/sovereign-operations.md).
 
 Read the [security contract](docs/security.md), [operations runbook](docs/operations.md),
 and [verification instructions](docs/verification.md) before operating a non-Explorer scope.

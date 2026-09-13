@@ -59,11 +59,27 @@ are bound to an immutable service contract and verified caller origin; they cann
 local contexts, profiles, tools or files. Attachments are disabled. Limits cover bytes, time,
 concurrency, request rate, sessions and idle retention. A declared profile must exist and
 have the boundary plugin enabled. Local Tool Access and the Embassy execution hook are both
-necessary; full real-agent execution and disable/drain lifecycle proof is still outstanding.
+necessary; the dedicated native execution hook rejects tools outside the immutable service
+policy. Version 1 permits only the response tool. Existing project instructions and the
+chosen model are part of the operator's disclosure decision.
 
-A bare `X-Peer-Id` from a loopback HTTP client is forgeable. The broker therefore requires a
-trusted origin resolver and has no shipped public startup path. SAM's authenticated mesh
-attribution alone does not authenticate the final local TCP hop. Publication remains closed.
+A bare `X-Peer-Id` from loopback is forgeable. Run the signing gateway in an exclusive operator
+node namespace. SAM verifies and replaces peer identity on its named HTTP route; the gateway
+signs that identity, service, exact request, time, nonce and broker-incarnation challenge.
+The broker accepts only the pinned Unix socket and verified signature. Agent Zero receives
+only the public key. The private signer, trust and socket mount sources must be separate
+and non-overlapping. Native SAM MCP forwarding lacks attributed callers and cannot execute
+an Embassy tool. Read [Embassy operations](embassy-operations.md) for the required topology.
 
-Sovereign mode remains blocked pending a tested binary contract, TUN translator, token/bundle
-lifecycle and real negative-network evidence. No claim of zero unapproved egress is made.
+Sovereign requires a matching runtime receipt plus observed guest confinement before config
+resolution can read any credential. The agent has no ordinary interface, node credential,
+node administration socket or container-control socket. Its public TCP-only CONNECT adapter
+permits explicit names and the bounded mesh facade; literal addresses, UDP, external DNS,
+metadata and administration routes are denied. Credential expiry or node/socket replacement
+drains the boundary. The UI gateway has separate default-deny IPv4/IPv6 rules and returns only
+established UI traffic. Receipt freshness, source/binary hashes, read-only mounts and guest
+privileges are checked. A kernel or binary mismatch leaves Sovereign unavailable.
+
+This boundary assumes a trusted Linux host and operator. It cannot protect an agent from a
+host administrator or certify a modified topology. Use [Sovereign operations](sovereign-operations.md)
+to certify the actual host; a release's CI receipt is evidence, not a transferable deployment permit.

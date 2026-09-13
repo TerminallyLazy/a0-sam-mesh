@@ -1,7 +1,7 @@
 schema: 1
 sam:
   release: v0.1.0-alpha.9
-  source: 077a43e2e89e544bc6ecfbf6b4607706490592ad
+  source: bcf9bc22e5f4bb00eb504c1ab5f55815e0e91f23
   linux_arm64_archive_sha256: cf0d2ae56674ba5a4f57165285b230da602a637dc698109145a8a0a0f688b02d
   binary_sha256:
     sam-node: df3f91eae31f2d32f7c82b5fd6b8b96edf1c660accd233fd4c8edacfd9b5ba3a

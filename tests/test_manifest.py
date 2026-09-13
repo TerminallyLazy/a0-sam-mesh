@@ -14,10 +14,10 @@ def test_manifest_is_installable_and_fail_closed():
         "name": "sam_mesh",
         "title": "SAM Mesh",
         "description": (
-            "Community preview of governed SAM discovery, approved remote tools, "
-            "and native mesh inference for Agent Zero."
+            "Governed SAM discovery, approved tools, native inference, Embassy specialists, "
+            "and certified Sovereign deployment for Agent Zero."
         ),
-        "version": "1.0.0-alpha.1",
+        "version": "1.0.0",
         "settings_sections": ["mcp", "external"],
         "per_project_config": True,
         "per_agent_config": True,

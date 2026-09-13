@@ -1,9 +1,9 @@
 # Native Agent Zero community integration
 
-Verified 2026-09-11 against the unmodified Agent Zero framework at
+Verified 2026-09-13 against the unmodified Agent Zero framework at
 `b1cbd1f960a1a5c4482b324dcff4742aa67b7a51`, using framework Python 3.12.4 from
-`agent0ai/agent-zero:ready`. This verifies native plugin integration, not the
-unfinished Embassy/Sovereign tracks or a live SAM network.
+the digest-pinned image listed in [compatibility](compatibility.md). Native packaging
+checks and live mesh acceptance have separate receipts; see [release readiness](release-readiness.md).
 
 ## Native integration
 
@@ -12,14 +12,14 @@ an ordinary copy at `/a0/usr/plugins/sam_mesh`. No core patch, persistent symlin
 custom server, dependency installation, or import-path modification is required.
 The test runtime uses a fresh, copied framework and disposable user state.
 
-[The machine-readable report](native-community-verification.json) records 60 passing
+[The machine-readable report](native-community-verification.json) records passing
 checks against actual framework discovery, installation, APIs and removal:
 
 - Native plugin-list metadata, Open screen, settings, README and Execute discovery.
 - Root MIT license discovery and exact license text returned by the protected document API.
 - Global, profile, project, and project/profile settings with inherited fallback.
 - Save hooks reject raw-token fields without overwriting the previous configuration.
-- All nine Tool subclasses, matching tool prompts, plugin skill and three Python extensions.
+- All nine Tool subclasses, matching tool prompts, plugin skill and native Python extensions, including the specialist execution boundary.
 - Chat-provider merging and canvas extension discovery.
 - Authentication and CSRF through the real `UiServerRuntime` API dispatcher.
 - Independent scoped activation; disabled tools, inference hooks, canvas and protected APIs.

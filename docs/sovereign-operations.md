@@ -11,7 +11,7 @@ keeps this failure visible and never substitutes proxy variables for confinement
 Use the published SAM `v0.1.0-alpha.9` binaries for the host architecture and verify
 its release checksum file. The tested Linux ARM64 archive SHA-256 is
 `cf0d2ae56674ba5a4f57165285b230da602a637dc698109145a8a0a0f688b02d`;
-source revision is `077a43e2e89e544bc6ecfbf6b4607706490592ad`.
+source revision is `bcf9bc22e5f4bb00eb504c1ab5f55815e0e91f23`.
 The published `agent-zero:ready` runtime image does not contain the A0 core source.
 Provide the verified upstream source directory as `A0_SOURCE_DIR`; Compose mounts
 it read-only, with separate writable `/a0/usr` and `/a0/tmp` volumes. Ensure the

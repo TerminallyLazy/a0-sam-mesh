@@ -4,7 +4,7 @@
 </head><body>
 <div x-data class="sam-observatory"><template x-if="$store.samSettings && config?.transport && config?.passport"><div x-init="$store.samSettings.bind(context)" x-destroy="delete context.samMesh">
 <img src="/plugins/sam_mesh/webui/logo.png" width="64" height="64" alt="SAM Mesh logo" style="border-radius: 12px;">
-<h3>SAM Mesh <small>Community preview</small></h3><p>Discovery, destination review, approvals and audit for each chat’s passport.</p>
+<h3>SAM Mesh</h3><p>Discovery, destination review, approvals and audit for each chat’s passport.</p>
 <p>Use an existing SAM node. Saving settings never enrolls or publishes a service.</p>
 <label>Transport<select x-model="config.transport.type" @change="if ($event.target.value === 'http') { config.transport.socket_path = ''; } else { config.transport.allowed_origins = []; config.transport.socket_path ||= '/var/run/sam/node.sock'; }"><option value="uds">Unix socket</option><option value="http">HTTP / HTTPS</option></select></label>
 <label>Node URL<input x-model.trim="config.transport.base_url" placeholder="http://sam-node:8080" autocomplete="off"></label>

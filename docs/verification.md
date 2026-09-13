@@ -8,7 +8,8 @@ fixtures need procfs and Linux `O_PATH`/`linkat`; the separate Python agent runt
 ruff check .
 ruff format --check .
 node --check webui/observatory-store.js
-node --test tests/test_observatory_store.mjs
+SAM_TEST_ALPINE_JS=/path/to/pinned/alpine.min.js \
+SAM_TEST_ALPINE_STORE_JS=/path/to/pinned/AlpineStore.js node --test tests/*.mjs
 python scripts/scan-secrets.py
 /opt/venv-a0/bin/python scripts/compatibility-report.py
 ```
@@ -39,8 +40,8 @@ Do not equate the snapshot with live acceptance against an enrolled mesh.
    ordering. Browser testing uses the shipped Alpine runtime with an explicit local fixture
    API; it is not a running Agent Zero WebUI/SAM combination.
 3. **Operational proof:** clean source suite, pattern scan and sentinel leakage assertions,
-   dependency report, offline stop/resume and warm-path latency. Live SAM release/main, full
-   host restart/disable/drain, published Embassy and Sovereign network tests remain outstanding.
+   dependency report, offline stop/resume and warm-path latency. Live SAM release/main, native response-tool completion, Embassy caller isolation and
+   withdrawal, and actual Sovereign network/guest startup have separate runtime receipts.
 
 The pattern scanner reports filenames and rule names only. It cannot prove arbitrary text
 contains no secret. Separate tests assert that fixture credentials and protected payloads do
@@ -60,12 +61,14 @@ before tests run. Test tools are installed only in that disposable CI environmen
 Build the same installable source archive from a reviewed release commit:
 
 ```sh
-git archive --format=zip --output=sam-mesh-1.0.0-alpha.1.zip v1.0.0-alpha.1
-sha256sum sam-mesh-1.0.0-alpha.1.zip
+git archive --format=zip --output=sam-mesh-1.0.0.zip v1.0.0
+sha256sum sam-mesh-1.0.0.zip
 ```
 
-The GitHub release carries the exact verification receipt and archive checksum. A public
-alpha or a passing CI run does not certify live mesh behavior or unavailable tracks.
+The GitHub release carries the exact native verification receipt, live acceptance receipts
+and archive checksums. A passing unit suite alone does not certify live mesh behavior.
+The Sovereign receipt from CI records that Linux runner; every deployment host must run
+its own complete certifier with matching immutable inputs.
 
 ## Native community installation
 
@@ -73,3 +76,19 @@ Use the disposable-runtime procedure in [native-community.md](native-community.m
 It exercises an actual installed copy and unmodified host discovery and management,
 without replacing framework loaders. The native settings browser check also uses
 the host settings prototype, component loader, save route and destroy lifecycle.
+
+## Live acceptance and Sovereign reproduction
+
+Release assets include sanitized JSON receipts for released/current-main SAM native model
+execution, Embassy isolation, governed real specialist invocation, spoof denial and static
+withdrawal. Real-model checks use a benign sentinel and record the actual native response
+tool with `break_loop=true`. They never publish enrollment bundles or model credentials.
+
+For Sovereign, run `deploy/scripts/certify-runtime.py` with the verified published binary
+directory, digest-pinned runtime and firewall images, and pinned upstream source archive.
+See [Sovereign operations](sovereign-operations.md) for complete commands. It provisions a
+disposable private mesh and deterministic provider, probes positive and negative network
+routes and lifecycle failures, and checks native UI, message execution and rollback. Only
+exit code zero with `supported: true` is a complete result. Adapter-only diagnostics always
+remain unsupported. Model fixtures in this harness do not replace the separate live-model
+acceptance receipts.

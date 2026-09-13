@@ -21,5 +21,7 @@ Automatic inference can fail over between peers; it cannot promise one named rec
 Native SAM provider support is separately gated and must use OpenAI chat mode.
 
 Enrollment, publication, emergency controls and network deployment are operator actions.
-The plugin does not enforce all network egress. Sovereign mode stays experimental until
-the exact deployment capability and negative-network matrix passes.
+Ordinary plugin settings do not enforce all network egress. Sovereign requires a fresh
+complete deployment certification and observed guest confinement; never bypass a failed
+gate or infer confinement from the selected mode. Embassy inbound specialists have only
+the response tool, with immutable project/profile and verified caller-bound sessions.

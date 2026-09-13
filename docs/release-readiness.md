@@ -1,69 +1,77 @@
-# Community preview release assessment
+# Stable release assessment
 
-**Version: 1.0.0-alpha.1 · 2026-09-11**
+**SAM Mesh 1.0.0 · 2026-09-13**
 
-SAM Mesh is published as a native Agent Zero community preview. The alpha version in
-`plugin.yaml`, the Git tag, and the release notes identifies the same scope. This release
-makes the implemented plugin available for evaluation; it does not certify the complete
-Embassy/Sovereign design or an enrolled production mesh.
+SAM Mesh is a native Agent Zero community plugin. Embassy and Sovereign are selectable,
+implemented modes; Explorer remains the default and grants no remote execution authority.
+The live mesh and native specialist checks use real enrolled peers and real model output.
+Sovereign additionally requires certification on the deployment host.
 
-## Available and unavailable tracks
+## Release scope
 
-| Track | Implemented | Release posture |
+| Track | Supported behavior | Operating requirement |
 | --- | --- | --- |
-| Core / Observatory | Scoped passports, connected-peer TCP and pinned UDS, schema validation, unknown-risk approvals, encrypted decisions, audit, nine native tools, local disconnect/resume, and the Observatory | Available in the alpha; Explorer is the default and grants no execution authority |
-| Cognitive Relay | Native provider, pinned client, admission and quotas, automatic-route disclosure, public probes, and one-use named-route approvals | Available for evaluation; real-model and enrolled-mesh certification remains pending |
-| Embassy | Declaration validation, broker/session components, tool-boundary helpers, and withdrawal-before-stop state machine | Unavailable; authenticated final-hop integration, applied SAM registration, and live host isolation are incomplete |
-| Sovereign | Capability report and experimental deployment draft | Unavailable; bootstrap/translator, UI ingress, and negative-network certification are incomplete |
-| Native MCP / Raw MCP | Read-only compatibility assessment | Registration and raw gateway execution remain unavailable because the host's disabled-tool list cannot deny future unknown gateway tools |
+| Core / Observatory | Scoped passports, pinned TCP/UDS, bounded schemas, one-use unknown-risk approvals, quotas, redacted audit and offline disconnect | Explicit scope, service/data policy and approval |
+| Cognitive Relay | Native SAM Mesh provider and destination-approved named requests | Compatible model, configured inference authority and positive call quota |
+| Embassy | Signed caller identity, three-tool broker, native specialist contexts, scoped isolation, drain and cleanup | Exclusive operator signing gateway, reviewed PUBLISH action and applied static SAM registration |
+| Sovereign | Published TUN/boundary, named TCP egress, separate isolated UI ingress, credential expiry/drain and state-preserving rollback | Matching complete, fresh Linux host certification and observed guest confinement |
+| Native MCP / Raw MCP | Review-only compatibility assessment | Raw execution and automatic registration remain unsupported because host tool denials cannot constrain future unknown gateway tools |
 
-Unavailable modes are disabled in native settings and remain blocked by backend capability
-checks. Saving settings cannot enroll a node or advertise a service. The approved design and
-its four plans remain in `docs/superpowers/`; their unmet gates are not marked complete.
+## Observed evidence
 
-## Verification
+- Real `gpt-6-astra` inference over two independently enrolled peers using released SAM
+  `v0.1.0-alpha.9` and current main `1966b79e7c6864876fc34722e78a050f1c23938c`, selected through
+  the native `sam_mesh` provider and completed through the response tool with `break_loop`.
+- Three-peer Embassy acceptance: native ZIP installation and publication controls, real
+  specialist message completion, verified caller/session binding, cross-peer and cross-service
+  rejection, native tool-policy enforcement, context/chat cleanup and drain.
+- Live spoof overwrite and unsigned-forwarding denial; native discovered-schema preflight,
+  one-use operator approval, actual specialist invocation and replay rejection. Static
+  withdrawal and node restart preserve identity while the old route becomes unavailable.
+- The complete 37-check Linux Sovereign matrix: real TUN, named mesh/external positives,
+  denied addresses/DNS/UDP/admin routes, verified credential failures and expiry, socket/node
+  restarts, isolated native UI/WebSocket, rollback and native guest model completion.
+  The final guest starts through the shipped supervisor and passes the strict native gate
+  in a fresh namespace. Both native model admissions and response-tool completion are observed.
+- Full Python, native ZIP install/uninstall, actual Alpine behavior, Ruff and secret-pattern
+  checks are enforced by [the release workflow](../.github/workflows/test.yml). Native tests
+  run against both the pinned framework and current upstream main in disposable runtimes.
+  Runtime changes require a new matching Sovereign certification.
 
-Native integration is checked against upstream Agent Zero
-`b1cbd1f960a1a5c4482b324dcff4742aa67b7a51` with framework Python 3.12.4 in a disposable,
-network-disconnected runtime. The package uses the normal ZIP installer and installed
-community namespace. Authentication, CSRF, config inheritance, hooks, tools, prompts,
-provider discovery, assets, independent activation, offline stop, and uninstall are covered.
-The source hash check covers all 3,034 upstream framework files; no core patch is required.
+The release includes sanitized JSON evidence, native installation receipts, the exact source
+archive and SHA-256 checksums. The final release asset set and linked CI run identify the
+commit actually shipped. A local fixture, CLI help output or an earlier candidate's receipt
+is never substituted for a complete matching runtime result.
 
-The release includes a machine-readable verification receipt alongside its ZIP and SHA-256
-checksums. The complete Python suite includes the audit-retention tests; five JavaScript
-behavior tests cover scope changes, stale responses, protected-data cleanup, and modal
-ownership. Ruff and the repository's secret-pattern scan are release checks. Before the
-first public push, all 104 historical Git blobs were also scanned with zero pattern findings.
-These scans do not prove that arbitrary text can never contain a secret.
+## Material limits
 
-CI runs the full suite and native ZIP verification on both the pinned framework revision
-and current upstream `main`. Its runtime image is pinned by digest, and test traffic is
-restricted to the container's local test fixtures after tooling setup.
+Sovereign is supported only on a host whose actual runtime certifier passes. The tested
+Docker Desktop `7.0.12-linuxkit` kernel is unsupported because the published nano-init refuses
+its extra fallback interfaces. Linux CI passed on `6.17.0-1022-azure`; its receipt cannot
+activate another host. A deployment receipt expires after 24 hours and binds boot, kernel,
+images, binaries, runtime plugin files, approval UI and read-only Agent Zero source.
 
-## Stable release gates
+Embassy v1 specialists have only the response tool. Project instructions and the chosen
+profile are operator-selected; arbitrary files, URLs, attachments, shell and subordinate
+agents are unavailable. Broker health is separate from mesh publication, and withdrawal
+requires removing the operator's static declaration. Discovery caches may outlive withdrawal.
+Pinned outbound Embassy routes are unavailable through Sovereign's restricted facade;
+its optional inbound Embassy deployment uses a separate signed gateway and Unix socket.
 
-- Exercise Explorer, remote discovery/preflight/approval/dispatch, TCP and UDS against the
-  supported SAM release and current-main binary matrix, including restarts and revocation.
-- Exercise native inference through a complete Agent Zero response-tool loop with actual
-  supported models on an enrolled mesh, covering streaming, function calls and errors.
-- Integrate and test an authenticated SAM-to-Embassy origin boundary, administrator-applied
-  service registration, malicious-caller isolation, draining, withdrawal, and rollback.
-- Complete Sovereign runtime/bootstrap/ingress integration using the exact published
-  `sam-box` contracts and pass negative-network and credential-lifecycle tests.
-
-No live enrolled SAM node or real-model credentials were used for the alpha verification.
-Generic host model-search traffic is outside this plugin's pinned transport: use the
-Observatory catalog and project-secret reference as described in the README.
+The live OAuth-backed model supports the native JSON response-tool path but rejects
+structured OpenAI function tools. Structured function transport and error cases are covered
+by framework fixtures; universal live provider compatibility is not claimed. See
+[compatibility](compatibility.md), [Embassy operations](embassy-operations.md), and
+[Sovereign operations](sovereign-operations.md).
 
 ## Publication
 
-The standalone [repository](https://github.com/TerminallyLazy/a0-sam-mesh) contains the root
-manifest, README, MIT license, generated logo, source, tests, and operating documentation.
-The [alpha release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.0-alpha.1)
-contains the installable archive and verification assets.
+The [1.0.0 release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.0) contains
+the installable ZIP and verification assets. The root manifest, native plugin layout,
+README, MIT license and original logo are in the standalone repository.
 
-The Plugin Index submission contains only `plugins/sam_mesh/index.yaml` and its square,
-8,108-byte `thumbnail.webp`. The index name matches the remote manifest. Index availability
-requires the upstream maintainers to review and merge the contribution; publishing the
-repository or release does not by itself make the plugin appear in the index.
+The [existing Plugin Index contribution](https://github.com/agent0ai/a0-plugins/pull/547)
+contains exactly `plugins/sam_mesh/index.yaml` and its square 8,108-byte thumbnail, using
+only supported fields and five recommended tags. The official submission validator passes.
+Index inclusion requires upstream maintainer review and merge; repository/release publication
+does not itself make the plugin appear in the index.

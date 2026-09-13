@@ -64,7 +64,7 @@ jobs:
           docker cp "$RUNNER_TEMP/sam-mesh.zip" sam-ci:/tmp/sam-mesh.zip
           docker cp scripts/verify-community.py sam-ci:/tmp/verify-community.py
           docker exec sam-ci sh -c 'mkdir -p /a0; tar -xzf /tmp/a0.tar.gz --strip-components=1 -C /a0; mkdir -p /a0/usr/plugins; chmod 755 /a0/usr /a0/usr/plugins; touch /a0/.sam-community-verification'
-          docker exec sam-ci /opt/venv-a0/bin/python -m pip install --target /tmp/test-tools pytest==8.4.2
+          docker exec sam-ci /opt/venv-a0/bin/python -m pip install --target /tmp/test-tools pytest==8.4.2 packaging==24.2
           docker network disconnect bridge sam-ci
       - name: Complete Python suite in the framework runtime
         run: |
