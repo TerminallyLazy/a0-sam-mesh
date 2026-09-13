@@ -127,6 +127,22 @@ async def validate_tcp_origin(
         if origin not in allowed:
             raise SamConnectivityError("SAM TCP origin is not exactly allowlisted")
 
+    # Published tun2connect DNS synthesizes both 100.64/10 and 100::/64.
+    # The latter is reserved outside this verified network namespace. Never
+    # make it a general SSRF exception or accept an operator-supplied flag.
+    sovereign_mesh = host == "mesh.sam.alt"
+    if sovereign_mesh:
+        from .sovereign import guest_probe
+
+        if (
+            config.base_url != "http://mesh.sam.alt"
+            or config.allowed_origins != ("http://mesh.sam.alt",)
+            or config.socket_path
+            or config.token
+            or (await asyncio.to_thread(guest_probe)).get("supported") is not True
+        ):
+            raise SamConnectivityError("SAM mesh facade requires a certified credentialless guest")
+
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         if resolver is None:
@@ -161,7 +177,13 @@ async def validate_tcp_origin(
         configured_local = host.lower() == "localhost" or (
             literal is not None and literal.is_loopback
         )
-        if address.is_loopback:
+        if sovereign_mesh:
+            synthetic = ipaddress.ip_network(
+                "100.64.0.0/10" if address.version == 4 else "100::/64"
+            )
+            if address not in synthetic:
+                raise SamConnectivityError("SAM mesh facade resolved outside its synthetic network")
+        elif address.is_loopback:
             if not configured_local:
                 raise SamConnectivityError("SAM TCP host resolved to a forbidden address class")
         elif _address_is_forbidden(address):
