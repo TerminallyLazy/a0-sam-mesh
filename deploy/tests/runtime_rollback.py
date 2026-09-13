@@ -84,6 +84,7 @@ def exercise(root, image, user_volume, source_volume, prefix):
                     "hooks.py",
                     "execute.py",
                     "helpers",
+                    "deploy",
                     "api",
                     "extensions",
                     "conf",

@@ -157,3 +157,12 @@ actual credential/network negative cases. It also requires a full native
 through prompt/extensions and `ResponseTool.break_loop`. That startup regression
 uses a deterministic model-output fixture and needs no model credential; named
 mesh network acceptance is exercised separately against the real SAM processes.
+
+Certification finishes with a fresh actual nano-init guest using the production
+read-only source, public receipt and nano binary mounts, the native installed
+plugin, and its exact credentialless mesh facade configuration. It must discover
+the disposable model through `SamClient`, invoke the native `sam_mesh` provider
+across the real mesh, and complete `context.communicate` with one governed
+admission and `ResponseTool.break_loop`. The internal baseline receipt used to
+exercise this final step is never exported and cannot pass the operator deployment
+gate; only the completed final receipt can enable deployment.

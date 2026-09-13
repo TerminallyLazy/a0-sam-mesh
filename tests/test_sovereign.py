@@ -170,3 +170,25 @@ class SovereignTests(unittest.TestCase):
         )
         self.assertFalse(guest_privileges_safe(status.replace("NoNewPrivs:\t1", "NoNewPrivs:\t0")))
         self.assertFalse(guest_privileges_safe(""))
+
+    def test_internal_baseline_cannot_enable_operator_deployment(self):
+        from helpers.sovereign import REQUIRED_RUNTIME_CHECKS, validate_receipt
+
+        receipt = {
+            "schema": 1,
+            "supported": True,
+            "generated_at": 100,
+            "kernel": "test",
+            "binary_sha256": {},
+            "pack_sha256": "pack",
+            "checks": {
+                name: True for name in REQUIRED_RUNTIME_CHECKS if name != "native_sovereign_guest"
+            },
+        }
+        self.assertIn(
+            "native_sovereign_guest_unverified",
+            validate_receipt(receipt, {}, "pack", "test", now=101),
+        )
+        self.assertEqual(
+            validate_receipt(receipt, {}, "pack", "test", now=101, require_guest=False), []
+        )

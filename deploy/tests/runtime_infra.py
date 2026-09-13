@@ -103,7 +103,7 @@ def initial():
             {"name": "sam:role:router", "allowedServices": ["*"], "allowedTargets": ["*"]},
             {
                 "name": "sam:role:node",
-                "allowedServices": ["mcp://sovereign_probe"],
+                "allowedServices": ["mcp://sovereign_probe", "inference://sovereign_fixture"],
                 "allowedTargets": ["*"],
                 "allowedAgents": ["a0.cert.test"],
                 "customDatalog": ['granted_agent_exact("a0.cert.test")'],
@@ -138,7 +138,7 @@ def initial():
         raise SystemExit("fixture endpoints unavailable")
     (ROOT / "node.yaml").write_text("version: v1alpha1\nservices: []\n")
     (ROOT / "provider.yaml").write_text(
-        "version: v1alpha1\nservices:\n  - type: mcp\n    name: sovereign_probe\n    target_url: http://127.0.0.1:18081/mcp\n"
+        "version: v1alpha1\nservices:\n  - type: mcp\n    name: sovereign_probe\n    target_url: http://127.0.0.1:18081/mcp\n  - type: inference\n    name: sovereign_fixture\n    target_url: http://127.0.0.1:18081\n"
     )
     Path("/run/sam-provider").mkdir(mode=0o700, exist_ok=True)
     start(

@@ -98,6 +98,7 @@ REQUIRED_RUNTIME_CHECKS = frozenset(
         "native_a0_ui",
         "native_a0_websocket",
         "native_a0_message_loop",
+        "native_sovereign_guest",
         "ui_gateway_ipv6_denied",
         "ui_gateway_dns_denied",
         "ui_initializer_caps_dropped",
@@ -105,7 +106,7 @@ REQUIRED_RUNTIME_CHECKS = frozenset(
 )
 
 
-def validate_receipt(receipt, binaries, pack_hash, kernel, now=None):
+def validate_receipt(receipt, binaries, pack_hash, kernel, now=None, *, require_guest=True):
     import time
 
     now = time.time() if now is None else now
@@ -125,7 +126,7 @@ def validate_receipt(receipt, binaries, pack_hash, kernel, now=None):
     blockers.extend(
         name + "_unverified"
         for name in sorted(REQUIRED_RUNTIME_CHECKS)
-        if checks.get(name) is not True
+        if checks.get(name) is not True and (require_guest or name != "native_sovereign_guest")
     )
     return blockers
 
@@ -247,7 +248,7 @@ def guest_privileges_safe(status):
         return False
 
 
-def guest_probe():
+def guest_probe(*, _certification_bootstrap=False):
     """Read public certification and inspect only guest-owned runtime surfaces."""
     import json
     import os
@@ -279,7 +280,17 @@ def guest_probe():
         if binaries.get("nano-init") != nano_hash:
             blockers.append("guest_nano_init_mismatch")
         root = Path(__file__).resolve().parents[1]
-        blockers.extend(validate_receipt(receipt, binaries, pack_sha256(root), platform.release()))
+        blockers.extend(
+            validate_receipt(
+                receipt,
+                binaries,
+                pack_sha256(root),
+                platform.release(),
+                require_guest=not (
+                    _certification_bootstrap and receipt.get("purpose") == "guest_validation_only"
+                ),
+            )
+        )
         if receipt.get("host_boot_id") != _boot_id():
             blockers.append("certification_host_boot_mismatch")
         if receipt.get("a0_source_sha256") != source_sha256("/a0"):

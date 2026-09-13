@@ -59,6 +59,7 @@ def main():
     unet = prefix + "-ui"
     uservol = prefix + "-user"
     sourcevol = prefix + "-source"
+    certvol = prefix + "-certification"
     containers = []
     volumes = []
     networks = []
@@ -102,7 +103,7 @@ def main():
         return wait_socket()
 
     try:
-        for volume in (avol, uvol, uservol, sourcevol):
+        for volume in (avol, uvol, uservol, sourcevol, certvol):
             docker("volume", "create", volume)
             volumes.append(volume)
         docker("network", "create", unet)
@@ -121,6 +122,8 @@ def main():
             str(args.binary_dir) + ":/opt/sam:ro",
             "-v",
             avol + ":/run/sam-agent",
+            "-v",
+            certvol + ":/certification",
             "--entrypoint",
             "/bin/sleep",
             args.image,
@@ -510,6 +513,153 @@ def main():
         rollback = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(rollback)
         checks.update(rollback.exercise(ROOT, args.image, uservol, sourcevol, prefix))
+        baseline_checks = cert_module.REQUIRED_RUNTIME_CHECKS - {"native_sovereign_guest"}
+        if not args.adapter_only and all(checks.get(name) is True for name in baseline_checks):
+            # This private baseline proves the already completed network matrix.
+            # It lacks native_sovereign_guest, so the operator deployment gate
+            # refuses it. No bootstrap receipt is exported or retained.
+            baseline = {
+                "schema": 1,
+                "supported": True,
+                "purpose": "guest_validation_only",
+                "generated_at": time.time(),
+                "kernel": evidence["kernel"],
+                "host_boot_id": evidence["host_boot_id"],
+                "a0_source_sha256": evidence["a0_source_sha256"],
+                "binary_sha256": initial_binaries,
+                "pack_sha256": initial_pack_hash,
+                "image_reference": args.image,
+                "firewall_image_reference": args.firewall_image,
+                "checks": dict(checks),
+            }
+            execute(
+                infra,
+                "import pathlib,os; p=pathlib.Path('/certification/receipt.json'); p.write_text("
+                + repr(json.dumps(baseline))
+                + "); p.chmod(0o600)",
+            )
+            action("node")
+            if not launch_boundary():
+                raise RuntimeError("verified boundary restart failed before native guest proof")
+            guest = prefix + "-native-guest"
+            containers.append(guest)
+            guest_launch = [
+                "run",
+                "-d",
+                "--name",
+                guest,
+                "--network",
+                "none",
+                "--device",
+                "/dev/net/tun",
+                "--cap-drop",
+                "ALL",
+                "--cap-add",
+                "NET_ADMIN",
+                "--security-opt",
+                "no-new-privileges=true",
+                "-v",
+                avol + ":/run/sam-agent:ro",
+                "-v",
+                certvol + ":/run/sam-certification:ro",
+                "-v",
+                sourcevol + ":/a0:ro",
+                "-v",
+                uservol + ":/a0/usr",
+                "--tmpfs",
+                "/a0/tmp",
+                "-v",
+                str(args.binary_dir / "nano-init") + ":/opt/sam/nano-init:ro",
+                "-v",
+                str(ROOT / "deploy/tests/native_guest.py") + ":/native-guest.py:ro",
+                "-w",
+                "/a0",
+                "-e",
+                "PYTHONPATH=/a0",
+                "-e",
+                "HF_HUB_OFFLINE=1",
+                "-e",
+                "TRANSFORMERS_OFFLINE=1",
+                "-e",
+                "LITELLM_LOCAL_MODEL_COST_MAP=True",
+                "--entrypoint",
+                "/bin/sleep",
+                args.image,
+                "infinity",
+            ]
+            docker(*guest_launch)
+            result = docker(
+                "exec",
+                guest,
+                "/opt/sam/nano-init",
+                "run",
+                "/run/sam-agent/agent.sock",
+                PYTHON,
+                "/native-guest.py",
+                "--dockerized=true",
+                check=False,
+                timeout=150,
+            )
+            if result.returncode != 0:
+                evidence["native_guest_error"] = (result.stdout + result.stderr)[-5000:]
+                checks["native_sovereign_guest"] = False
+            else:
+                native = json.loads(result.stdout.strip().splitlines()[-1])
+                evidence["native_guest"] = native
+                witnessed = (
+                    execute(
+                        infra,
+                        "from pathlib import Path; print(Path('/fixture/model-witness.log').read_text().count('native-model-request') == 1)",
+                    )
+                    == "True"
+                )
+                checks["native_sovereign_guest"] = (
+                    native.get("native_sovereign_guest") is True and witnessed
+                )
+            if checks.get("native_sovereign_guest") is True:
+                baseline.update(purpose="runtime_certification", checks=dict(checks))
+                execute(
+                    infra,
+                    "from pathlib import Path; Path('/certification/receipt.json').write_text("
+                    + repr(json.dumps(baseline))
+                    + ")",
+                )
+                # Fresh process AND namespace, no bootstrap wrapper: exercise the
+                # same strict guest gate and native config used in production.
+                final_guest = prefix + "-final-guest"
+                containers.append(final_guest)
+                guest_launch[3] = final_guest
+                docker(*guest_launch)
+                final_result = docker(
+                    "exec",
+                    final_guest,
+                    "/opt/sam/nano-init",
+                    "run",
+                    "/run/sam-agent/agent.sock",
+                    PYTHON,
+                    "/native-guest.py",
+                    "--dockerized=true",
+                    "--final-validation",
+                    check=False,
+                    timeout=150,
+                )
+                if final_result.returncode:
+                    checks["native_sovereign_guest"] = False
+                    evidence["native_guest_strict_error"] = (
+                        final_result.stdout + final_result.stderr
+                    )[-5000:]
+                else:
+                    strict_result = json.loads(final_result.stdout.strip().splitlines()[-1])
+                    evidence["native_guest_strict"] = strict_result
+                    checks["native_sovereign_guest"] = (
+                        strict_result.get("native_sovereign_guest") is True
+                        and strict_result.get("strict_guest_probe") is True
+                    )
+            execute(
+                infra,
+                "from pathlib import Path; Path('/certification/receipt.json').unlink(missing_ok=True)",
+            )
+
     except Exception as exc:
         evidence["failure"] = str(exc)[:2000]
     finally:
