@@ -136,7 +136,23 @@ def pack_sha256(root):
 
     root = Path(root)
     digest = hashlib.sha256()
-    paths = sorted((root / "deploy").rglob("*")) + [root / "helpers/sovereign.py"]
+    paths = []
+    for directory in (
+        "deploy",
+        "helpers",
+        "extensions",
+        "api",
+        "conf",
+        "tools",
+        "prompts",
+        "skills",
+        "webui",
+    ):
+        paths.extend((root / directory).rglob("*"))
+    paths.extend(
+        root / name for name in ("hooks.py", "execute.py", "plugin.yaml", "default_config.yaml")
+    )
+    paths = sorted(set(paths))
     for path in paths:
         if path.is_file() and "__pycache__" not in path.parts and path.suffix not in {".pyc"}:
             digest.update(str(path.relative_to(root)).encode() + b"\0" + path.read_bytes())

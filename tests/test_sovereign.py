@@ -192,3 +192,27 @@ class SovereignTests(unittest.TestCase):
         self.assertEqual(
             validate_receipt(receipt, {}, "pack", "test", now=101, require_guest=False), []
         )
+
+    def test_pack_binds_runtime_code_and_approval_ui_but_not_docs(self):
+        import tempfile
+
+        from helpers.sovereign import pack_sha256
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = pack_sha256(root)
+            (root / "docs").mkdir()
+            (root / "docs/guide.md").write_text("documentation")
+            self.assertEqual(pack_sha256(root), original)
+            for name in (
+                "helpers/config.py",
+                "helpers/mcp_transport.py",
+                "extensions/native.py",
+                "webui/config.html",
+            ):
+                path = root / name
+                path.parent.mkdir(exist_ok=True)
+                path.write_text("changed runtime contract")
+                changed = pack_sha256(root)
+                self.assertNotEqual(changed, original, name)
+                original = changed

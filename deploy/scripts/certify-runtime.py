@@ -629,13 +629,42 @@ def main():
                 final_guest = prefix + "-final-guest"
                 containers.append(final_guest)
                 guest_launch[3] = final_guest
+                # Execute the exact shipped supervisor/default native UI command.
+                entrypoint_index = guest_launch.index("--entrypoint")
+                guest_launch[entrypoint_index:entrypoint_index] = [
+                    "-v",
+                    str(ROOT / "deploy/scripts") + ":/pack/deploy/scripts:ro",
+                    "-v",
+                    uvol + ":/run/a0-ui",
+                    "-e",
+                    "A0_WEBUI_PORT=80",
+                ]
+                guest_launch[-3] = "/bin/sh"
+                guest_launch[-1] = "/pack/deploy/scripts/start-sandbox-network.sh"
                 docker(*guest_launch)
+                for _ in range(60):
+                    readiness = docker(
+                        "exec",
+                        final_guest,
+                        PYTHON,
+                        "-c",
+                        "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:80/',timeout=2); assert r.status==200 and b'Agent Zero' in r.read()",
+                        check=False,
+                        timeout=5,
+                    )
+                    if readiness.returncode == 0:
+                        evidence["native_shipped_startup"] = True
+                        break
+                    time.sleep(1)
+                else:
+                    evidence["native_shipped_startup"] = False
+                    evidence["native_startup_error"] = docker(
+                        "logs", "--tail", "30", final_guest, check=False
+                    ).stdout[-5000:]
+                    raise RuntimeError("shipped Sovereign supervisor did not start native UI")
                 final_result = docker(
                     "exec",
                     final_guest,
-                    "/opt/sam/nano-init",
-                    "run",
-                    "/run/sam-agent/agent.sock",
                     PYTHON,
                     "/native-guest.py",
                     "--dockerized=true",

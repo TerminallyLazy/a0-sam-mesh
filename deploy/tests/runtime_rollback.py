@@ -91,7 +91,10 @@ def exercise(root, image, user_volume, source_volume, prefix):
                     "prompts",
                     "tools",
                     "webui",
+                    "skills",
                 ):
+                    if not (root / name).exists():
+                        continue
                     bundle.add(
                         root / name,
                         arcname=name,

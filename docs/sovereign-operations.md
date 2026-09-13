@@ -31,7 +31,9 @@ digest. The firewall builder installs iptables inside the image only.
 Run the command in `deploy/README.md` on the actual deployment host. Freeze the
 pack and binaries while it runs. Receipts are mode 0600, contain hashes/results
 rather than credentials, expire after 24 hours, and are bound to the host's boot
-ID, kernel, exact binaries, A0 source and deployment files. A Docker restart or
+ID, kernel, exact binaries, A0 source, deployment files, and runtime plugin code
+and approval UI (including the manifest). Runtime changes require recertification;
+ordinary documentation changes outside deploy do not. A Docker restart or
 upgrade requires recertification. CI receipts are release evidence; copying one
 to another host cannot enable that host.
 
@@ -166,3 +168,9 @@ across the real mesh, and complete `context.communicate` with one governed
 admission and `ResponseTool.break_loop`. The internal baseline receipt used to
 exercise this final step is never exported and cannot pass the operator deployment
 gate; only the completed final receipt can enable deployment.
+
+The final strict check uses the shipped start script and supervisor, waits for
+the default native UI on port 80, then invokes the strict native guest probe in
+that same TUN namespace. The private first-stage bootstrap lives only in its
+certification subprocess; production guest probes always require the complete
+receipt. A fresh process proves that the final receipt passes without bootstrap.

@@ -103,7 +103,11 @@ def initial():
             {"name": "sam:role:router", "allowedServices": ["*"], "allowedTargets": ["*"]},
             {
                 "name": "sam:role:node",
-                "allowedServices": ["mcp://sovereign_probe", "inference://sovereign_fixture"],
+                "allowedServices": [
+                    "mcp://sovereign_probe",
+                    "inference://sovereign_fixture",
+                    "system://sam.catalog",
+                ],
                 "allowedTargets": ["*"],
                 "allowedAgents": ["a0.cert.test"],
                 "customDatalog": ['granted_agent_exact("a0.cert.test")'],
