@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import sqlite3
 import stat
+import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -142,6 +145,30 @@ def _determine_plugin_asset_path(project: str, profile: str) -> str:
     return determine_plugin_asset_path("sam_mesh", project, profile, "state.sqlite3")
 
 
+@contextmanager
+def _bootstrap_lock(descriptor):
+    """Serialize WAL setup across connections/processes on the anchored inode.
+
+    SQLite may refuse competing journal-mode lock upgrades immediately instead
+    of invoking its busy handler. This lock only coordinates connection setup;
+    ordinary reads/writes retain SQLite's existing transactions and busy limit.
+    """
+    deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise StorageUnavailableError("storage_unavailable") from None
+            time.sleep(min(0.005, remaining))
+    try:
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
 class SQLiteStorage:
     """Open hardened short-lived SQLite connections without retaining global state."""
 
@@ -238,35 +265,41 @@ class SQLiteStorage:
             ):
                 raise ValueError("unsafe database")
             os.fchmod(db, 0o600)
-            for suffix in ("-wal", "-shm", "-journal"):
-                try:
-                    side = os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
-                except FileNotFoundError:
-                    continue
-                if (
-                    not stat.S_ISREG(side.st_mode)
-                    or side.st_uid != os.geteuid()
-                    or side.st_nlink != 1
-                    or side.st_mode & 0o077
-                ):
-                    raise ValueError("unsafe sidecar")
-            connection = sqlite3.connect(
-                f"/proc/self/fd/{db}",
-                timeout=BUSY_TIMEOUT_MS / 1000,
-                isolation_level=None,
-                factory=_AnchoredConnection,
-            )
-            # SQLite resolves the proc fd to the verified inode's current pathname.
-            opened = connection.execute("PRAGMA database_list").fetchone()[2]
-            actual = os.stat(opened, follow_symlinks=False)
-            if (actual.st_dev, actual.st_ino) != (metadata.st_dev, metadata.st_ino):
-                raise ValueError("database substituted")
-            connection.row_factory = sqlite3.Row
-            connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA synchronous = FULL")
-            if connection.execute("PRAGMA journal_mode = WAL").fetchone()[0] != "wal":
-                raise ValueError("WAL unavailable")
+            with _bootstrap_lock(db):
+                for suffix in ("-wal", "-shm", "-journal"):
+                    try:
+                        side = os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
+                        if side.st_nlink == 0:
+                            # Last-close SQLite cleanup can unlink a resolved
+                            # sidecar before stat returns. Refresh this stale
+                            # snapshot once; validate any replacement normally.
+                            side = os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    if (
+                        not stat.S_ISREG(side.st_mode)
+                        or side.st_uid != os.geteuid()
+                        or side.st_nlink != 1
+                        or side.st_mode & 0o077
+                    ):
+                        raise ValueError("unsafe sidecar")
+                connection = sqlite3.connect(
+                    f"/proc/self/fd/{db}",
+                    timeout=BUSY_TIMEOUT_MS / 1000,
+                    isolation_level=None,
+                    factory=_AnchoredConnection,
+                )
+                # SQLite resolves the proc fd to the verified inode's current pathname.
+                opened = connection.execute("PRAGMA database_list").fetchone()[2]
+                actual = os.stat(opened, follow_symlinks=False)
+                if (actual.st_dev, actual.st_ino) != (metadata.st_dev, metadata.st_ino):
+                    raise ValueError("database substituted")
+                connection.row_factory = sqlite3.Row
+                connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("PRAGMA synchronous = FULL")
+                if connection.execute("PRAGMA journal_mode = WAL").fetchone()[0] != "wal":
+                    raise ValueError("WAL unavailable")
             connection._descriptors = descriptors
             descriptors = []
             return connection

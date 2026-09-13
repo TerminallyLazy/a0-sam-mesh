@@ -170,11 +170,14 @@ class AuditStoreTests(unittest.TestCase):
 
     def test_concurrent_append_has_contiguous_per_scope_sequence_and_valid_chain(self):
         barrier = threading.Barrier(17)
-        results = []
+        results, failures = [], []
 
         def append(index):
             barrier.wait()
-            results.append(self.store.append(event(details={"index": index})))
+            try:
+                results.append(self.store.append(event(details={"index": index})))
+            except Exception as error:
+                failures.append(error)
 
         threads = [threading.Thread(target=append, args=(index,)) for index in range(16)]
         for thread in threads:
@@ -184,6 +187,7 @@ class AuditStoreTests(unittest.TestCase):
             thread.join(timeout=10)
 
         self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual([type(error).__name__ for error in failures], [])
         self.assertEqual(sorted(result.sequence for result in results), list(range(1, 17)))
         verification = self.store.verify_chain(self.scope)
         self.assertTrue(verification.valid)
