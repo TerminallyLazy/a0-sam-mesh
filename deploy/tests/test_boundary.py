@@ -60,3 +60,24 @@ def test_credential_deadline_rejects_missing_or_expired(tmp_path):
 def test_canonical_mesh_underscore_is_preserved():
     wire = b"CONNECT my_service.mcp.sam.alt:80 HTTP/1.1\r\n\r\n"
     assert boundary.connect_target(wire, set()) == "my_service.mcp.sam.alt:80"
+
+
+def test_published_tun2connect_go_request_wire():
+    # BoundaryClient v0.0.1 calls net/http.Request.Write, whose default UA is fixed.
+    wire = b"CONNECT allowed.test:18081 HTTP/1.1\r\nHost: allowed.test:18081\r\nUser-Agent: Go-http-client/1.1\r\n\r\n"
+    assert boundary.connect_target(wire, {"allowed.test"}) == "allowed.test:18081"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        b"User-Agent: agent-controlled",
+        b"Transfer-Encoding: chunked",
+        b"Connection: Upgrade",
+        b"Authorization: Bearer not-permitted",
+    ],
+)
+def test_no_general_header_extension(extra):
+    wire = b"CONNECT allowed.test:80 HTTP/1.1\r\nHost: allowed.test:80\r\n" + extra + b"\r\n\r\n"
+    with pytest.raises(ValueError):
+        boundary.connect_target(wire, {"allowed.test"})

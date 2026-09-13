@@ -97,6 +97,7 @@ REQUIRED_RUNTIME_CHECKS = frozenset(
         "rollback_preserves_state",
         "native_a0_ui",
         "native_a0_websocket",
+        "native_a0_message_loop",
         "ui_gateway_ipv6_denied",
         "ui_gateway_dns_denied",
         "ui_initializer_caps_dropped",
@@ -171,6 +172,7 @@ def certified_probe(receipt_path, binary_dir="/opt/sam", root=None):
             blockers.append("certification_ui_image_mismatch")
         report.update(
             supported=not blockers,
+            posture="certified" if not blockers else "experimental",
             status="supported" if not blockers else "unsupported",
             blockers=blockers,
             network_enforcement_claimed=not blockers,
@@ -193,6 +195,10 @@ def source_sha256(root):
     root = Path(root)
     if not (root / "agent.py").is_file() or not (root / "run_ui.py").is_file():
         raise ValueError("Agent Zero source is absent")
+    if not all((root / "knowledge" / area).is_dir() for area in ("main", "fragments", "solutions")):
+        raise ValueError(
+            "Agent Zero knowledge directories must be prepared before mounting read-only"
+        )
     digest = hashlib.sha256()
     import os
 
@@ -227,6 +233,18 @@ def _readonly_mount(path):
         if len(fields) > 5 and fields[4] == path:
             return "ro" in fields[5].split(",")
     return False
+
+
+def guest_privileges_safe(status):
+    """Only namespace-local TUN setup authority may remain in the guest."""
+    try:
+        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        return fields.get("NoNewPrivs", "").strip() == "1" and all(
+            int(fields[name].strip(), 16) & ~(1 << 12) == 0
+            for name in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
+        )
+    except (KeyError, ValueError):
+        return False
 
 
 def guest_probe():
@@ -281,7 +299,16 @@ def guest_probe():
         ]
         if defaults6 != ["tun0"]:
             blockers.append("guest_ipv6_default_route_invalid")
-        for forbidden in ("/run/sam-node", "/run/private", "/run/credentials"):
+        if not guest_privileges_safe(Path("/proc/self/status").read_text()):
+            blockers.append("guest_privileges_not_confined")
+        for forbidden in (
+            "/run/sam-node",
+            "/run/private",
+            "/run/credentials",
+            "/var/run/docker.sock",
+            "/run/docker.sock",
+            "/run/containerd/containerd.sock",
+        ):
             if Path(forbidden).exists():
                 blockers.append("guest_node_authority_present")
         if os.environ.get("SAM_API_TOKEN"):
@@ -309,6 +336,7 @@ def guest_probe():
         blockers.append("trusted_guest_certification_required")
     report.update(
         supported=not blockers,
+        posture="certified" if not blockers else "experimental",
         status="supported" if not blockers else "unsupported",
         blockers=sorted(set(blockers)),
         network_enforcement_claimed=not blockers,

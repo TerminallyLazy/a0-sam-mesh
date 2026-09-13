@@ -23,9 +23,15 @@ def exercise(root, image, user_volume, source_volume, prefix):
     agent = {
         "image": image,
         "network_mode": "none",
+        "cap_drop": ["ALL"],
+        "security_opt": ["no-new-privileges:true"],
         "working_dir": "/a0",
         "entrypoint": ["/bin/sleep", "infinity"],
-        "volumes": ["source:/a0:ro", "user:/a0/usr"],
+        "volumes": [
+            "source:/a0:ro",
+            "user:/a0/usr",
+            str(root / "deploy/tests/native_loop.py") + ":/tmp/native-loop.py:ro",
+        ],
         "tmpfs": ["/a0/tmp"],
     }
     quiet = {"image": image, "network_mode": "none", "entrypoint": ["/bin/sleep", "infinity"]}
@@ -41,7 +47,13 @@ def exercise(root, image, user_volume, source_volume, prefix):
     }
     ordinary_agent = dict(
         agent,
-        entrypoint=["/opt/venv-a0/bin/python", "/a0/run_ui.py", "--host=127.0.0.1", "--port=18091"],
+        entrypoint=[
+            "/opt/venv-a0/bin/python",
+            "/a0/run_ui.py",
+            "--dockerized=true",
+            "--host=127.0.0.1",
+            "--port=18091",
+        ],
         environment={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"},
     )
     ordinary = {
@@ -160,6 +172,18 @@ def exercise(root, image, user_volume, source_volume, prefix):
                 time.sleep(1)
             else:
                 raise RuntimeError("ordinary native Agent Zero did not become ready after rollback")
+            native_loop = compose(
+                ordinary_path,
+                "exec",
+                "-T",
+                "--env",
+                "PYTHONPATH=/a0",
+                "agent-zero",
+                "/opt/venv-a0/bin/python",
+                "/tmp/native-loop.py",
+                "--dockerized=true",
+            )
+            native_loop = json.loads(native_loop.strip().splitlines()[-1])
             result = compose(
                 ordinary_path,
                 "exec",
@@ -184,13 +208,16 @@ def exercise(root, image, user_volume, source_volume, prefix):
             ).strip()
             receipt = json.loads(export.read_text())
             stopped = not compose(sov, "ps", "--status", "running", "--services").strip()
-            return (
-                result["disabled"]
-                and result["user"]
-                and node == "identity-state-preserved"
-                and stopped
-                and receipt["remote_features"]["plugin_disabled"]
-            )
+            return {
+                "native_a0_message_loop": native_loop.get("native_a0_message_loop") is True,
+                "rollback_preserves_state": (
+                    result["disabled"]
+                    and result["user"]
+                    and node == "identity-state-preserved"
+                    and stopped
+                    and receipt["remote_features"]["plugin_disabled"]
+                ),
+            }
         finally:
             compose(ordinary_path, "down")
             compose(sov, "down")

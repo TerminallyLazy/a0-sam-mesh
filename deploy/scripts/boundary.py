@@ -69,8 +69,11 @@ def connect_target(request, allowed):
         raise ValueError("destination is not allowed")
     for line in lines[1:-2]:
         key, sep, value = line.partition(":")
-        if not sep or key.lower() != "host" or value.strip() != target:
-            raise ValueError("CONNECT headers are restricted to matching Host")
+        if not sep or (key.lower(), value.strip()) not in {
+            ("host", target),
+            ("user-agent", "Go-http-client/1.1"),
+        }:
+            raise ValueError("CONNECT headers must match the published bounded wire contract")
     return target
 
 

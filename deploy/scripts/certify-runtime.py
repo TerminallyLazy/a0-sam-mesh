@@ -207,6 +207,7 @@ def main():
         evidence["network_probe"] = probe.stderr[-4000:]
         if probe.returncode == 0:
             observed = json.loads(probe.stdout)
+            evidence["request_diagnostics"] = observed.pop("_diagnostics", [])
             evidence["adapter_checks"] = observed
             if not args.adapter_only:
                 checks.update(observed)
@@ -398,6 +399,15 @@ def main():
         docker("exec", agent, "chmod", "755", "/a0/usr", "/a0/usr/plugins")
         docker(
             "exec",
+            agent,
+            "mkdir",
+            "-p",
+            "/a0/knowledge/main",
+            "/a0/knowledge/fragments",
+            "/a0/knowledge/solutions",
+        )
+        docker(
+            "exec",
             "-d",
             "-w",
             "/a0",
@@ -408,7 +418,7 @@ def main():
             agent,
             "/bin/sh",
             "-c",
-            "/opt/venv-a0/bin/python /a0/run_ui.py --host=127.0.0.1 --port=18090 > /tmp/a0-native.log 2>&1",
+            "/opt/venv-a0/bin/python /a0/run_ui.py --dockerized=true --host=127.0.0.1 --port=18090 > /tmp/a0-native.log 2>&1",
         )
         import urllib.request
 
@@ -499,9 +509,7 @@ def main():
         )
         rollback = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(rollback)
-        checks["rollback_preserves_state"] = rollback.exercise(
-            ROOT, args.image, uservol, sourcevol, prefix
-        )
+        checks.update(rollback.exercise(ROOT, args.image, uservol, sourcevol, prefix))
     except Exception as exc:
         evidence["failure"] = str(exc)[:2000]
     finally:

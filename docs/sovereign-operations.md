@@ -16,7 +16,11 @@ The published `agent-zero:ready` runtime image does not contain the A0 core sour
 Provide the verified upstream source directory as `A0_SOURCE_DIR`; Compose mounts
 it read-only, with separate writable `/a0/usr` and `/a0/tmp` volumes. Ensure the
 user volume's `usr` and `usr/plugins` directories are mode 0755. The community
-plugin must already be installed in that user volume.
+plugin must already be installed in that user volume. Before mounting source, run
+`python3 deploy/scripts/prepare-source.py /srv/agent-zero/source`. This creates only
+the native knowledge directories; the capability gate refuses unprepared source.
+The default command includes `--dockerized=true`, which keeps native prompt helpers
+local instead of attempting development RPC. Local model caches run offline.
 
 Copy `deploy/compose/.env.example` to an operator-managed environment file and set
 all paths explicitly. Never put workload credentials in that environment file.
@@ -43,7 +47,10 @@ fact for published control planes that do not persist `allowedAgents`.
 
 The mode-0600 bundle uses the actual published `version: v1`, nested `agent`
 identity and `egress.allow` schema. Its `agent.credential` points to a mode-0600
-JWT file in the box's `/run/credentials` mount. Issuer and audience come from
+JWT file in the box's `/run/credentials` mount. These files and the certification
+receipt must be owned by the container runtime UID (root/UID 0 in the shipped
+Compose), with protected parent directories. Provision ownership explicitly on
+the operator host; changing permissions alone does not change ownership. Issuer and audience come from
 operator Compose values, not the bundle. The published box verifies signature,
 issuer, audience and subject. The pack additionally requires finite expiry with
 at least 30 seconds remaining. The checked-in sample is intentionally unusable.
@@ -62,7 +69,8 @@ Preflight checks immutable image references, the explicit user volume, free
 loopback UI port, rendered Compose and the exact-host certification gate. Runtime
 startup validates the actual credential, socket ownership and namespace.
 `guest_probe()` lets the native plugin verify public certification, read-only
-mounts, core/binary hashes, exactly `lo` and `tun0`, both default routes and actual
+mounts, core/binary hashes, exactly `lo` and `tun0`, both default routes,
+no-new-privileges and only NET_ADMIN capability, no container-control socket, and actual
 boundary admission without accessing the node socket or node credential.
 
 Agent Zero receives only its read-only boundary socket, separate UI socket,
@@ -73,7 +81,9 @@ trust key, under its own authenticated contract.
 
 The public boundary accepts named TCP CONNECT only. External names must be exact
 lowercase DNS names in the bundle; an empty list denies external egress. Literal
-IPs, wildcard policy, TCP DNS and all UDP upgrades are refused. Canonical mesh
+IPs, wildcard policy, TCP DNS and all UDP upgrades are refused. The adapter accepts the published Go client's
+fixed `User-Agent: Go-http-client/1.1`, strips it before forwarding, and refuses
+general header extensions. Canonical mesh
 service names retain underscores. The published box restricts `mesh.sam.alt` to
 its inference and MCP facade; node administrative paths remain inaccessible.
 Virtual DNS answers can be synthesized locally even when a caller names an
@@ -142,4 +152,8 @@ re-running certification and preflight, and recreating the services. Never use
 `down --volumes`, `docker volume prune`, or `sam-node reset` as part of this pack's
 lifecycle. The runtime harness exercises real native plugin disable, ordinary
 Agent Zero startup, user-file preservation, node-state volume preservation and
-actual credential/network negative cases.
+actual credential/network negative cases. It also requires a full native
+`context.communicate` message on read-only source with all capabilities dropped,
+through prompt/extensions and `ResponseTool.break_loop`. That startup regression
+uses a deterministic model-output fixture and needs no model credential; named
+mesh network acceptance is exercised separately against the real SAM processes.

@@ -12,6 +12,7 @@ p.add_argument("mode", choices=["network", "adapter"])
 p.add_argument("--infra-ip", required=True)
 a = p.parse_args()
 checks = {}
+diagnostics = []
 
 
 def connected(host, port):
@@ -21,10 +22,22 @@ def connected(host, port):
     s.settimeout(3)
     s.connect("/run/sam-agent/agent.sock")
     target = host + ":" + str(port)
-    s.sendall(("CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\n\r\n").encode())
+    s.sendall(
+        (
+            "CONNECT "
+            + target
+            + " HTTP/1.1\r\nHost: "
+            + target
+            + "\r\nUser-Agent: Go-http-client/1.1\r\n\r\n"
+        ).encode()
+    )
     response = b""
     while b"\r\n\r\n" not in response:
-        response += s.recv(1)
+        piece = s.recv(1)
+        if not piece:
+            s.close()
+            raise OSError("boundary closed before admission")
+        response += piece
     if not response.startswith(b"HTTP/1.1 200"):
         s.close()
         raise OSError("boundary refused")
@@ -32,29 +45,46 @@ def connected(host, port):
 
 
 def http(host, path, port=80, body=None):
-    with connected(host, port) as s:
-        data = (
-            ("POST" if body else "GET")
-            + " "
-            + path
-            + " HTTP/1.1\r\nHost: "
-            + host
-            + "\r\nConnection: close\r\n"
-        ).encode()
-        if body:
-            data += (
-                "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: "
-                + str(len(body))
-                + "\r\n"
+    observation = {"host": host, "port": port, "path": path, "mode": a.mode, "stage": "connect"}
+    diagnostics.append(observation)
+    try:
+        with connected(host, port) as s:
+            observation["stage"] = "send"
+            data = (
+                ("POST" if body else "GET")
+                + " "
+                + path
+                + " HTTP/1.1\r\nHost: "
+                + host
+                + "\r\nConnection: close\r\n"
             ).encode()
-        s.sendall(data + b"\r\n" + (body or b""))
-        response = b""
-        while True:
-            chunk = s.recv(65536)
-            if not chunk:
-                break
-            response += chunk
-        return response
+            if body:
+                data += (
+                    "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: "
+                    + str(len(body))
+                    + "\r\n"
+                ).encode()
+            s.sendall(data + b"\r\n" + (body or b""))
+            observation["stage"] = "receive"
+            response = b""
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                response += chunk
+            status = response.split(b"\r\n", 1)[0].split()
+            observation["status"] = (
+                status[1].decode("ascii", errors="replace") if len(status) > 1 else "empty"
+            )
+            observation["bytes"] = len(response)
+            observation["stage"] = "complete"
+            return response
+    except (OSError, TimeoutError) as exc:
+        # Fixtures use public sentinels only. Never record response bodies, tokens,
+        # request headers, or arbitrary exception text in certification receipts.
+        observation["error"] = type(exc).__name__
+        observation["errno"] = getattr(exc, "errno", None)
+        raise
 
 
 checks["tun_real"] = (
@@ -69,7 +99,7 @@ checks["socket_separation"] = (
     checks["node_authority_absent"] and Path("/run/sam-agent/agent.sock").exists()
 )
 if a.mode == "network" and not checks["tun_real"]:
-    print(json.dumps(checks, sort_keys=True))
+    print(json.dumps(dict(checks, _diagnostics=diagnostics), sort_keys=True))
     raise SystemExit(0)
 
 for label, host, port in [
@@ -152,4 +182,4 @@ with socket.socket(socket.AF_UNIX) as s:
         b"GET /.well-known/masque/udp/allowed.test/18082/ HTTP/1.1\r\nUpgrade: connect-udp\r\n\r\n"
     )
     checks["udp_protocol_denied"] = b"403" in s.recv(1024)
-print(json.dumps(checks, sort_keys=True))
+print(json.dumps(dict(checks, _diagnostics=diagnostics), sort_keys=True))

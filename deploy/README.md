@@ -49,3 +49,7 @@ isolation on a host where TUN cannot start; this always reports unsupported.
 The certifier creates and removes only randomly named `sam-stable-sovereign-*`
 containers, networks and volumes. It creates disposable credentials and a private
 SAM mesh inside its own infrastructure container.
+
+Prepare the extracted `A0_SOURCE_DIR` with `python3 deploy/scripts/prepare-source.py /srv/agent-zero/source` before mounting it read-only. The certifier performs the
+same preparation inside its disposable source volume and requires native message
+completion after rollback, using a credential-free deterministic model fixture.
