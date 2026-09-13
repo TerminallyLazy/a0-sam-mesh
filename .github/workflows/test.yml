@@ -21,13 +21,17 @@ jobs:
           node-version: "22"
       - name: Install lint tooling
         run: python -m pip install ruff==0.16.0
+      - name: Fetch the pinned native Alpine runtime for UI regression
+        run: |
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/agent0ai/agent-zero/b1cbd1f960a1a5c4482b324dcff4742aa67b7a51/webui/vendor/alpine/alpine.min.js -o "$RUNNER_TEMP/alpine.min.js"
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/agent0ai/agent-zero/b1cbd1f960a1a5c4482b324dcff4742aa67b7a51/webui/js/AlpineStore.js -o "$RUNNER_TEMP/AlpineStore.js"
       - name: Lint, UI behavior, and secret patterns
         run: |
           ruff check .
           ruff format --check .
           node --check webui/observatory-store.js
           node --check webui/settings-store.js
-          node --test tests/test_observatory_store.mjs
+          SAM_TEST_ALPINE_JS="$RUNNER_TEMP/alpine.min.js" SAM_TEST_ALPINE_STORE_JS="$RUNNER_TEMP/AlpineStore.js" node --test tests/*.mjs
           python scripts/scan-secrets.py
 
   framework:

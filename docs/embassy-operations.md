@@ -12,7 +12,7 @@ The native SAM MCP forwarding path loses caller attribution. It may probe initia
 
 ## Provision the gateway
 
-Use three distinct, empty, owner-only directories for private signing material, public trust and the broker socket. The runtime user must own them; the supplied Agent Zero image runs as root. Run `scripts/prepare-embassy.py` in that same framework image with only those directories mounted and `--network none`. For example, from the plugin checkout:
+Use three separate, non-overlapping, empty, owner-only directories for private signing material, public trust and the broker socket. None may be inside another; sibling directories such as the example below are suitable. This applies to the Linux host mount sources as well as their container destinations. The runtime user must own them; the supplied Agent Zero image runs as root. Run `scripts/prepare-embassy.py` in that same framework image with only those directories mounted and `--network none`. For example, from the plugin checkout:
 
 ```sh
 # Create these directories on the Linux deployment host with the runtime owner's UID.
@@ -27,7 +27,7 @@ docker run --rm --network none --cap-drop ALL \
   --private-dir /private --public-dir /public --socket-dir /socket
 ```
 
-The command creates a stable Ed25519 identity, preserves it on repeat runs and refuses mismatched keys or unsafe permissions. It never prints keys. Mount `/srv/sam/embassy-private` only in the gateway at `/run/embassy-key:ro`. Mount `/srv/sam/embassy-public` in Agent Zero at `/run/sam-embassy-trust:ro`, and share `/srv/sam/embassy-socket` at `/run/sam-embassy` with Agent Zero writable and the gateway read-only. A Unix-socket volume must be local to the Linux Docker host; use Docker volumes on Docker Desktop, not a macOS host socket bind.
+Before creating any key material, the command rejects equal or nested directory paths. On Linux it also reads `/proc/self/mountinfo` and compares filesystem backing roots, so binding nested host sources to seemingly separate `/private`, `/public` and `/socket` destinations is refused. Linux provisioning fails closed if that mount topology cannot be read. Keep this layout unchanged when starting the gateway and Agent Zero; do not add an alternate agent-readable mount of the signer directory. The command creates a stable Ed25519 identity, preserves it on repeat runs and refuses mismatched keys or unsafe permissions. It never prints keys. Mount `/srv/sam/embassy-private` only in the gateway at `/run/embassy-key:ro`. Mount `/srv/sam/embassy-public` in Agent Zero at `/run/sam-embassy-trust:ro`, and share `/srv/sam/embassy-socket` at `/run/sam-embassy` with Agent Zero writable and the gateway read-only. A Unix-socket volume must be local to the Linux Docker host; use Docker volumes on Docker Desktop, not a macOS host socket bind.
 
 Run the gateway from a read-only copy of this plugin checkout:
 

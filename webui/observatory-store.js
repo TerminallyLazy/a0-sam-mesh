@@ -138,9 +138,9 @@ export const store = createStore("samObservatory", {
   },
   async startPublication() {
     if (!this.publicationAck || !this.publication?.service) return;
-    const service = structuredClone(this.publication.service);
     this.publicationAck = false;
     await this.run(async () => {
+      const service = JSON.parse(JSON.stringify(this.publication.service));
       this.publication = await this.api("publication_start", { service, acknowledgment: "PUBLISH" });
       this.embassyRuntime = await this.api("publication_status");
     });

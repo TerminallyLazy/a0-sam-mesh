@@ -8,6 +8,7 @@ from .embassy_sessions import VerifiedOrigin
 def create_embassy_mcp(service, manager, origin_resolver):
     from fastmcp import FastMCP
     from fastmcp.server.dependencies import get_http_request
+    from fastmcp.tools import Tool
 
     if not callable(origin_resolver):
         raise DecisionError("verified_origin_boundary_unavailable")
@@ -36,16 +37,23 @@ def create_embassy_mcp(service, manager, origin_resolver):
             "max_runtime_seconds": service.max_runtime_seconds,
         }
 
-    @mcp.tool(
-        description=HTTP_CONTRACT_MARKER
-        + "Ask the configured specialist within its published limits.",
-        annotations={"readOnlyHint": False, "idempotentHint": False},
-    )
-    async def ask_specialist(message: str, session_id: str | None = None) -> dict:
+    async def ask_specialist(message: str, session_id: str = "") -> dict:
         request = {"message": message}
-        if session_id is not None:
+        if session_id:
             request["session_id"] = session_id
         return await manager.ask(service, await origin(), request)
+
+    ask_tool = Tool.from_function(
+        ask_specialist,
+        description=HTTP_CONTRACT_MARKER
+        + "Ask the configured specialist within its published limits. "
+        + "Omit session_id or use an empty string to start a new session.",
+        annotations={"readOnlyHint": False, "idempotentHint": False},
+    )
+    # The Python default supports omitted sessions at invocation. JSON Schema's
+    # default is only an annotation and lies outside our governed subset.
+    ask_tool.parameters["properties"]["session_id"].pop("default", None)
+    mcp.add_tool(ask_tool)
 
     @mcp.tool(
         description=HTTP_CONTRACT_MARKER + "Finish your own isolated specialist session.",
