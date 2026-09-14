@@ -2,15 +2,18 @@
 <script type="module" src="/plugins/sam_mesh/webui/settings-store.js"></script>
 <link rel="stylesheet" href="/plugins/sam_mesh/webui/observatory.css">
 </head><body>
-<div x-data class="sam-observatory"><template x-if="$store.samSettings && config?.transport && config?.passport"><div x-init="$store.samSettings.bind(context)" x-destroy="delete context.samMesh">
+<div x-data class="sam-observatory"><template x-if="$store.samSettings && config?.transport && config?.passport"><div x-init="config.connection ||= 'external'; $store.samSettings.bind(context)" x-destroy="delete context.samMesh">
 <img src="/plugins/sam_mesh/webui/logo.png" width="64" height="64" alt="SAM Mesh logo" style="border-radius: 12px;">
-<h3>SAM Mesh</h3><p>Discovery, destination review, approvals and audit for each chat’s passport.</p>
-<p>Use an existing SAM node. Saving settings never enrolls or publishes a service.</p>
+<h3>SAM Mesh</h3><p>Connect a mesh and choose what this project or profile can use.</p>
+<label>Connection<select x-model="config.connection"><option value="managed">Local mesh — automatic setup</option><option value="external">Existing SAM node</option></select></label>
+<p class="sam-note" x-show="config.connection === 'managed'">SAM runs privately inside Agent Zero. Saving creates the mesh and node automatically. Your identity survives updates and restarts. No services are published automatically.</p>
+<div x-show="config.connection !== 'managed'">
 <label>Transport<select x-model="config.transport.type" @change="if ($event.target.value === 'http') { config.transport.socket_path = ''; } else { config.transport.allowed_origins = []; config.transport.socket_path ||= '/var/run/sam/node.sock'; }"><option value="uds">Unix socket</option><option value="http">HTTP / HTTPS</option></select></label>
 <label>Node URL<input x-model.trim="config.transport.base_url" placeholder="http://sam-node:8080" autocomplete="off"></label>
 <label x-show="config.transport.type === 'uds'">Socket path<input x-model.trim="config.transport.socket_path" placeholder="/var/run/sam/node.sock"></label>
 <label x-show="config.transport.type === 'http'">Secret name (reference only)<input x-model.trim="config.transport.token_secret_name" placeholder="SAM_NODE_TOKEN" autocomplete="off"></label>
 <label x-show="config.transport.type === 'http'">Allowed node origins, one per line<textarea :value="(config.transport.allowed_origins || []).join('\n')" @input="config.transport.allowed_origins = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)" placeholder="http://sam-node:8080"></textarea></label>
+</div>
 <label>Mode<select x-model="config.passport.mode" @change="$store.samSettings.modeChanged(config)"><option value="explorer">Explorer</option><option value="guarded_mesh">Guarded Mesh</option><option value="embassy">Embassy</option><option value="raw_mcp" disabled>Raw MCP (unavailable)</option><option value="sovereign">Sovereign</option></select></label>
 <div x-show="['embassy', 'sovereign'].includes(config.passport.mode)">
 <label><input type="checkbox" x-model="config.passport.inbound.enabled" @change="config.features.inbound_publication = config.passport.inbound.enabled"> Allow reviewed Embassy publication</label>

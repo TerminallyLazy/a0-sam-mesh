@@ -17,13 +17,14 @@ def test_manifest_is_installable_and_fail_closed():
             "Governed SAM discovery, approved tools, native inference, Embassy specialists, "
             "and certified Sovereign deployment for Agent Zero."
         ),
-        "version": "1.0.0",
+        "version": "1.0.1",
         "settings_sections": ["mcp", "external"],
         "per_project_config": True,
         "per_agent_config": True,
         "always_enabled": False,
     }
     assert defaults["schema"] == "a0.sam.config/v1alpha1"
+    assert defaults["connection"] == "managed"
     assert defaults["passport"]["mode"] == "explorer"
     assert defaults["features"] == {
         "remote_calls": False,

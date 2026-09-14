@@ -31,14 +31,9 @@ class SetupTests(GateTests):
         self.assertFalse(plan["applied"])
         self.assertFalse(plan["available"])
 
-    async def test_diagnostics_cannot_enroll_or_install(self):
-        import importlib.util
+    async def test_native_setup_has_no_manual_execute_script(self):
         from pathlib import Path
 
-        path = Path(__file__).resolve().parents[1] / "execute.py"
-        spec = importlib.util.spec_from_file_location("sam_diagnostic", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        report = module.local_diagnostics("/nonexistent/node.sock")
-        self.assertFalse(report["socket_exists"])
-        self.assertFalse(report["enrollment_performed"])
+        root = Path(__file__).resolve().parents[1]
+        self.assertFalse((root / "execute.py").exists())
+        self.assertIn("def install(", (root / "hooks.py").read_text())

@@ -558,6 +558,7 @@ class StatusTruthTests(GateTests):
         with (
             patch.object(tool_runtime, "resolve_config", return_value=self.config),
             patch("helpers.tool_runtime.SamClient.health", return_value=NodeHealth(True, {})),
+            patch("helpers.tool_runtime.SamClient.list_models", return_value=[]),
         ):
             value = await tool_runtime.dispatch(None, "sam_mesh_status", {})
         self.assertEqual(value["guarded_invocation"], "public_single_use_approval")
@@ -603,6 +604,7 @@ class NativeCleanupTests(GateTests):
         with (
             patch.object(tool_runtime, "resolve_config", return_value=self.config),
             patch("helpers.tool_runtime.SamClient.health", return_value=NodeHealth(True, {})),
+            patch("helpers.tool_runtime.SamClient.list_models", return_value=[]),
             patch("helpers.tool_runtime.SamClient.aclose", side_effect=RuntimeError("private")),
         ):
             value = await tool_runtime.dispatch(None, "sam_mesh_status", {})

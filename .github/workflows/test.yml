@@ -53,6 +53,8 @@ jobs:
           A0_REF: ${{ matrix.a0_ref }}
         run: |
           curl --fail --location --retry 3 "https://codeload.github.com/agent0ai/agent-zero/tar.gz/$A0_REF" -o "$RUNNER_TEMP/a0.tar.gz"
+          curl --fail --location --retry 3 https://github.com/google/sam/releases/download/v0.1.0-alpha.9/sam_Linux_arm64.tar.gz -o "$RUNNER_TEMP/sam.tar.gz"
+          echo "cf0d2ae56674ba5a4f57165285b230da602a637dc698109145a8a0a0f688b02d  $RUNNER_TEMP/sam.tar.gz" | sha256sum --check
           git archive --format=zip --output="$RUNNER_TEMP/sam-mesh.zip" HEAD
           docker run --detach --name sam-ci \
             --volume "$GITHUB_WORKSPACE:/candidate:ro" \
@@ -61,6 +63,7 @@ jobs:
             --env LITELLM_LOCAL_MODEL_COST_MAP=True \
             --entrypoint /bin/sleep "$A0_IMAGE" infinity
           docker cp "$RUNNER_TEMP/a0.tar.gz" sam-ci:/tmp/a0.tar.gz
+          docker cp "$RUNNER_TEMP/sam.tar.gz" sam-ci:/tmp/sam.tar.gz
           docker cp "$RUNNER_TEMP/sam-mesh.zip" sam-ci:/tmp/sam-mesh.zip
           docker cp scripts/verify-community.py sam-ci:/tmp/verify-community.py
           docker exec sam-ci sh -c 'mkdir -p /a0; tar -xzf /tmp/a0.tar.gz --strip-components=1 -C /a0; mkdir -p /a0/usr/plugins; chmod 755 /a0/usr /a0/usr/plugins; touch /a0/.sam-community-verification'
@@ -68,7 +71,7 @@ jobs:
           docker network disconnect bridge sam-ci
       - name: Complete Python suite in the framework runtime
         run: |
-          docker exec --workdir /candidate --env A0_CHECKOUT=/a0 --env PYTHONPATH=/tmp/test-tools \
+          docker exec --workdir /candidate --env A0_CHECKOUT=/a0 --env SAM_MANAGED_TEST_ARCHIVE=/tmp/sam.tar.gz --env PYTHONPATH=/tmp/test-tools \
             sam-ci /opt/venv-a0/bin/python -m pytest -q -p no:cacheprovider
       - name: Native install, scopes, auth, hooks, and uninstall
         run: |

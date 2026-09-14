@@ -34,3 +34,75 @@
 .sam-observatory details + details { margin-top: 12px; }
 .sam-wrap { flex-wrap: wrap; justify-content: start; }
 .sam-observatory textarea:focus-visible, .sam-observatory select:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; }
+
+/* Canvas content owns its scroll area; auto margins must never center the panel. */
+.sam-observatory-host,
+.right-canvas-panels .sam-observatory-host {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  container-type: inline-size;
+}
+.sam-observatory {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sam-observatory *, .sam-observatory *::before, .sam-observatory *::after { box-sizing: border-box; }
+.sam-header { gap: 10px; padding-bottom: 2px; }
+.sam-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sam-brand img { flex-shrink: 0; border-radius: 8px; }
+.sam-header h2 { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 600; letter-spacing: 0; }
+.sam-subtitle { display: block; color: var(--color-text-secondary, #aaa); font-size: 11px; overflow-wrap: anywhere; }
+.sam-header .sam-actions { gap: 4px; flex-shrink: 0; }
+.sam-observatory .sam-icon-button { width: 30px; height: 30px; min-height: 30px; padding: 5px; display: grid; place-items: center; border: 1px solid transparent; background: transparent; border-radius: 6px; }
+.sam-icon-button:hover { background: var(--color-background-hover, #303030); border-color: var(--color-border, #383838); }
+.sam-icon-button x-icon { font-size: 18px; }
+.sam-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: visible; gap: 0; margin: 16px 0; }
+.sam-tabs button { min-width: 0; padding: 9px 2px; font-size: 12px; color: var(--color-text-secondary, #aaa); border-radius: 0; }
+.sam-tabs button[aria-selected="true"] { color: var(--color-text); border-bottom-color: var(--color-text); font-weight: 600; }
+.sam-tabs button:hover { background: var(--color-background-hover, #252525); color: var(--color-text); }
+.sam-observatory h3 { font-size: 14px; line-height: 1.4; margin: 0 0 10px; font-weight: 600; }
+.sam-observatory h4 { margin: 18px 0 8px; font-size: 13px; }
+.sam-connection { padding: 14px; border: 1px solid var(--color-border, #383838); background: color-mix(in srgb, var(--color-text, #ddd) 3%, transparent); border-radius: 9px; }
+.sam-connection-heading { display: flex; align-items: center; gap: 8px; }
+.sam-connection-heading h3 { margin: 0; }
+.sam-connection p { color: var(--color-text-secondary, #aaa); margin: 8px 0 0; font-size: 12px; }
+.sam-connection .button { margin-top: 12px; }
+.sam-status-dot { width: 7px; height: 7px; background: #9b9b9b; border-radius: 50%; flex-shrink: 0; }
+.sam-status-dot.is-ready { background: #71c797; }
+.sam-status-dot.is-working { background: #dab777; }
+.sam-facts { grid-template-columns: 95px minmax(0, 1fr); padding: 14px 0; margin: 0 0 14px; gap: 10px 12px; border-top: 0; }
+.sam-facts dt { font-size: 12px; }
+.sam-facts dd { min-width: 0; font-size: 12px; }
+.sam-facts code { font-size: 11px; }
+.sam-observatory .button { min-height: 32px; font-size: 12px; border-radius: 6px; }
+.sam-observatory details { padding: 11px 12px; border-radius: 7px; }
+.sam-observatory summary { font-size: 12px; font-weight: 500; }
+.sam-note { font-size: 11px; margin: 12px 0; }
+.sam-refresh-status { color: var(--color-text-secondary, #aaa); font-size: 11px; margin: 0 0 10px; }
+.sam-stop { margin-top: 18px; padding-top: 14px; }
+.sam-actions { flex-wrap: wrap; }
+.sam-code { font-size: 11px; max-width: 100%; padding: 10px; }
+.sam-review { padding: 12px; }
+.sam-card { padding: 12px 0; border-bottom: 1px solid var(--color-border, #383838); overflow-wrap: anywhere; }
+.sam-card .sam-chip { display: inline-block; margin: 4px 0 4px 8px; max-width: 100%; white-space: normal; }
+.sam-observatory label { font-size: 12px; }
+.sam-observatory .sam-facts dt, .sam-observatory .sam-facts dd { margin: 0; }
+@container (max-width: 350px) {
+  .sam-observatory { padding: 12px; }
+  .sam-header h2 { font-size: 14px; }
+  .sam-facts { grid-template-columns: 80px minmax(0, 1fr); }
+}
+
+.sam-empty { padding: 18px 16px; margin: 16px 0; border: 1px dashed var(--color-border); border-radius: 10px; }
+.sam-empty h4, .sam-catalog h4 { margin: 0 0 8px; font-size: 14px; overflow-wrap: anywhere; }
+.sam-empty p, .sam-catalog p { color: var(--color-text-secondary); line-height: 1.5; margin-bottom: 0; }
+.sam-catalog { display: grid; gap: 12px; margin-top: 16px; }

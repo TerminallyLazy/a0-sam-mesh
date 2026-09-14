@@ -124,9 +124,14 @@ async def _dispatch_client(config, agent, name, arguments, client):
     adapter = RemoteTools(client)
     if name == "sam_mesh_status":
         health = await client.health()
+        # SAM's public health routes say only that its HTTP process is alive.
+        # Model catalog access requires a connected node and valid credentials.
+        models = await client.list_models()
         return {
             "status": "verified_now",
             "ready": health.ready,
+            "authenticated": True,
+            "model_count": len(models),
             "guarded_invocation": (
                 "public_single_use_approval" if config.features.remote_calls else "disabled"
             ),

@@ -84,3 +84,20 @@ Raw MCP, automatic host MCP registration, A2A, semantic intent search and peer m
 remain outside the supported surface. Cold audit verification scales with retained history;
 warm local performance checks are not production latency guarantees. See
 [release readiness](release-readiness.md) for the exact release evidence.
+
+## Native setup and Observatory correction (1.0.1)
+
+Published SAM alpha.9 returns `text/plain` body `OK` from `/healthz` and `/readyz`.
+The adapter accepts that exact response only for these GET routes; arbitrary text,
+non-success HTTP responses, MCP and model payloads retain strict validation.
+Connection status verifies protected `/v1/models` access as well, because health is public.
+Managed setup pins both release archives and the extracted sam-one/sam-node digests for
+Linux arm64/x86_64. Startup is supervised through native hooks and preserves node identity.
+The framework pin remains b1cbd1f960a1a5c4482b324dcff4742aa67b7a51; SAM main observed
+2026-09-14 is af295d74219515e60b019f70561a2661b525b00f. Managed binaries remain pinned
+to the tested published alpha.9 release.
+
+Fresh MCP clients now send `initialize` and `notifications/initialized` before their first
+session request. Concurrent first requests share one initialization. Explicit repeated
+initialization is still rejected. Plaintext health acceptance never applies to model or
+MCP payloads; authenticated model catalog access is required for ready status.

@@ -20,7 +20,8 @@ SAM uses Streamable HTTP over TCP or UDS. Required labels mean any matching labe
 Automatic inference can fail over between peers; it cannot promise one named recipient.
 Native SAM provider support is separately gated and must use OpenAI chat mode.
 
-Enrollment, publication, emergency controls and network deployment are operator actions.
+Native install/settings hooks create the private local mesh and enroll its node automatically.
+External enrollment, publication, emergency controls and network deployment are operator actions.
 Ordinary plugin settings do not enforce all network egress. Sovereign requires a fresh
 complete deployment certification and observed guest confinement; never bypass a failed
 gate or infer confinement from the selected mode. Embassy inbound specialists have only

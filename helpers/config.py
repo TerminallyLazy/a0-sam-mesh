@@ -444,7 +444,11 @@ def validate_storage_config(value):
         raw = _mapping(value, "config")
         if len(json.dumps(raw, allow_nan=False).encode()) > 65536:
             raise ValueError()
-        _reject_unknown(raw, {"schema", "transport", "passport", "features"}, "config")
+        _reject_unknown(
+            raw, {"schema", "transport", "passport", "features", "connection"}, "config"
+        )
+        if raw.get("connection", "external") not in {"managed", "external"}:
+            raise ValueError()
         if raw.get("schema") != CONFIG_SCHEMA:
             raise ValueError()
         _parse_passport(_required(raw, "passport", "config"))
@@ -663,7 +667,7 @@ def resolve_config(
     """Resolve scoped config, credentials, policy, and lease-relevant scope."""
     loaded = _load_plugin_config("sam_mesh", agent=agent) if raw is None else raw
     config = _mapping(loaded, "config")
-    _reject_unknown(config, {"schema", "transport", "passport", "features"}, "config")
+    _reject_unknown(config, {"schema", "transport", "passport", "features", "connection"}, "config")
     schema = _string(_required(config, "schema", "config"), "config.schema")
     if schema != CONFIG_SCHEMA:
         raise ConfigError(f"config.schema must be {CONFIG_SCHEMA}")
@@ -704,8 +708,15 @@ def resolve_config(
             )
         )
     )
+    transport_settings = _required(config, "transport", "config")
+    if config.get("connection", "external") not in {"managed", "external"}:
+        raise ConfigError("invalid_connection_mode")
+    if config.get("connection") == "managed" and passport.mode is not OperatingMode.SOVEREIGN:
+        from usr.plugins.sam_mesh.hooks import managed_transport
+
+        transport_settings = managed_transport()
     transport = _parse_transport(
-        _required(config, "transport", "config"),
+        transport_settings,
         context=context,
         allowed_socket_roots=allowed_socket_roots,
         allow_absent_socket=authority_disabled,

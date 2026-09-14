@@ -58,7 +58,7 @@ def verify(archive):
         and item.has_main_screen
         and item.has_config_screen
         and item.has_readme
-        and item.has_execute_script,
+        and not item.has_execute_script,
         "plugin_list_surfaces",
     )
     licensed = item.has_license

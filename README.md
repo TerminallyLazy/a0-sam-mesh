@@ -14,7 +14,7 @@ for the tested versions, certification evidence and supported deployment limits.
 
 Native installation, scope, lifecycle and browser verification are documented in
 [Native community integration](docs/native-community.md). The standalone plugin is
-[MIT licensed](LICENSE). See the [release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.0)
+[MIT licensed](LICENSE). See the [release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.1)
 for the installable ZIP, checksums, and verification report.
 
 ## What you can do
@@ -32,17 +32,29 @@ for the installable ZIP, checksums, and verification report.
 Use an existing Agent Zero framework environment with Python 3.12+, HTTPX/HTTPcore,
 cryptography, jsonschema, PyYAML, OpenAI/LiteLLM, and FastMCP 3 for Embassy.
 The separate agent execution Python is not the framework environment. This repository
-does not install SAM, enroll a node, change node identity, or start a daemon.
+creates a private local SAM mesh automatically through its native install hook. Published
+SAM binaries are downloaded from the official release and verified against pinned hashes.
+The node and mesh listen only on loopback; no remote services or model calls are enabled automatically.
 
 1. Open Agent Zero's **Plugins** screen and install from the repository URL
    `https://github.com/TerminallyLazy/a0-sam-mesh`, or upload the ZIP from the release.
    The native installer places it at `/a0/usr/plugins/sam_mesh`.
 2. Check **SAM Mesh** is enabled for the intended project/profile. Agent Zero
    enables newly installed plugins by default; Explorer grants no remote-call authority.
-3. Open its settings under MCP or External. Explorer is the default. Set the node endpoint
-   and transport, then save and open **Mesh Observatory** from settings, the plugin list’s Open action,
-   or the right canvas. Select a chat to inspect its saved passport.
-4. Start with Node and Catalog. A partial catalog is not proof that every peer is online.
+3. Open **Mesh Observatory** in the right canvas. Installation and node startup appear
+   automatically, followed by authenticated connection status. There is no Execute step.
+4. In **Connection settings**, use **Local mesh — automatic setup** or choose **Existing SAM node**
+   and provide that node's endpoint and credential reference. Save to apply the choice.
+   Existing saved connections are preserved when updating from 1.0.0.
+5. Start with Node and Catalog. A new private mesh has no remote services or model providers
+   until you connect or publish them. An empty catalog is shown explicitly; it is not a failed connection.
+
+Managed setup supports Linux arm64 and x86_64, including ordinary Agent Zero Docker containers.
+It does not enable Sovereign confinement. Private mesh/node identities and verified binaries live
+under `/a0/usr/sam_mesh/managed`, outside the installed code directory. Native disable, pre-update,
+and uninstall hooks stop owned processes; identity is retained for reinstallation. Startup and
+native use recover the managed node after an Agent Zero restart. Setup failures can be retried by
+saving Local mesh in settings. The process and archive locks prevent duplicate supervisors.
 
 For UDS, mount the SAM socket directory into the Agent Zero container, set `socket_path`
 and keep a valid HTTP base URL as the local HTTP authority. No token is sent over UDS.

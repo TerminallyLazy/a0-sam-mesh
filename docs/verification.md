@@ -56,13 +56,17 @@ preflight and 500 ms offline-stop limits are local test budgets, not production 
 CI in `.github/workflows/test.yml` runs static checks, all Python tests, and actual ZIP
 installation in the pinned Agent Zero framework image. It checks both the pinned upstream
 revision and upstream `main`; the fixture runtime is disconnected from external networking
-before tests run. Test tools are installed only in that disposable CI environment.
+before tests run. The published, checksum-verified SAM archive is copied in before
+network disconnection. `SAM_MANAGED_TEST_ARCHIVE` makes managed setup, authenticated
+catalog/discovery, wrong-token denial and identity-preserving restart mandatory tests.
+Native lifecycle tests exercise install/save/disable/re-enable/update/uninstall through
+Agent Zero's hook dispatcher. Test tools are installed only in that disposable CI environment.
 
 Build the same installable source archive from a reviewed release commit:
 
 ```sh
-git archive --format=zip --output=sam-mesh-1.0.0.zip v1.0.0
-sha256sum sam-mesh-1.0.0.zip
+git archive --format=zip --output=sam-mesh-1.0.1.zip v1.0.1
+sha256sum sam-mesh-1.0.1.zip
 ```
 
 The GitHub release carries the exact native verification receipt, live acceptance receipts

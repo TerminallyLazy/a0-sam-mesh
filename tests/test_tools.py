@@ -103,7 +103,9 @@ from usr.plugins.sam_mesh.helpers.config import resolve_config
 import yaml
 def plugin_config():
     path = Path(sys.argv[1]) / "usr/plugins/sam_mesh/default_config.yaml"
-    return yaml.safe_load(path.read_text())
+    config = yaml.safe_load(path.read_text())
+    config["connection"] = "external"
+    return config
 def fake_agent():
     context = SimpleNamespace(id="chat", get_data=lambda key: "project")
     return SimpleNamespace(context=context,
@@ -148,7 +150,8 @@ async def main():
         with patch.object(tool_runtime, 'resolve_config', return_value=config):
             result = await tool.execute()
         assert json.loads(result.message)['ready'] is True
-        assert server.received[-1]['path'] == '/healthz'
+        assert {entry['path'] for entry in server.received} == {'/healthz', '/v1/models'}
+        assert json.loads(result.message)['authenticated'] is True
     print('INSTALLED_WRAPPERS=9; POLICY_IDENTITIES=9; REAL_UDS_STATUS=1; LOG_SCAN=clean')
 asyncio.run(main())
 """

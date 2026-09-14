@@ -16,6 +16,12 @@ from .storage import SQLiteStorage, copy_plain_json, timestamp_us
 _CIPHER = Fernet(Fernet.generate_key())
 
 
+def invalidate_pending_decisions():
+    """Drop sealed approval authority on plugin stop without clearing quotas or stops."""
+    global _CIPHER
+    _CIPHER = Fernet(Fernet.generate_key())
+
+
 class DecisionError(RuntimeError):
     pass
 

@@ -71,6 +71,7 @@ async def main():
     options = dict(db_path=root / 'state.sqlite3', trusted_root=root)
     stores = DecisionStore(**options), LeaseStore(**options), AuditStore(**options)
     async with Sidecar(uds_path=str(root / 'node.sock')) as server:
+        raw['connection'] = 'external'
         raw['transport'].update(socket_path=server.uds_path, base_url=server.base_url)
         cfg = resolve_config(agent, raw=raw, allowed_socket_roots=(str(root),))
         async def execute(name, args):

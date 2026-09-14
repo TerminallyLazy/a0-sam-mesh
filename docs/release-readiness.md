@@ -1,6 +1,6 @@
 # Stable release assessment
 
-**SAM Mesh 1.0.0 · 2026-09-13**
+**SAM Mesh 1.0.1 · 2026-09-14**
 
 SAM Mesh is a native Agent Zero community plugin. Embassy and Sovereign are selectable,
 implemented modes; Explorer remains the default and grants no remote execution authority.
@@ -17,10 +17,33 @@ Sovereign additionally requires certification on the deployment host.
 | Sovereign | Published TUN/boundary, named TCP egress, separate isolated UI ingress, credential expiry/drain and state-preserving rollback | Matching complete, fresh Linux host certification and observed guest confinement |
 | Native MCP / Raw MCP | Review-only compatibility assessment | Raw execution and automatic registration remain unsupported because host tool denials cannot constrain future unknown gateway tools |
 
-## Observed evidence
+## 1.0.1 repair
+
+Native install and settings hooks now create a private local mesh and authenticated node.
+Global disable, re-enable, startup, update and uninstall use hooks; there is no Execute
+script or button. Identity and the private service configuration survive lifecycle changes.
+Stopping invalidates sealed pending approvals without resetting quotas or emergency stops.
+
+The live installation exposed two protocol defects missed by 1.0.0's fixture coverage:
+SAM's health endpoints return plain-text `OK`, and a fresh MCP connection must initialize
+before discovery. The repair accepts only the exact health response, verifies authentication
+separately through `/v1/models`, and automatically initializes each MCP session. Real
+published-binary tests now cover these paths, including wrong-token rejection.
+
+The Observatory now anchors at the top of the side canvas, handles late chat restoration,
+shows connection setup and empty catalog states, and opens native scoped settings. Live
+native Tool-class checks verified status, models, local services and remote discovery.
+The fresh local mesh starts with no advertised services. Embassy and Sovereign remain
+selectable with their existing explicit deployment requirements.
+
+The release's CI and receipt identify the exact tested commit and a new complete Sovereign
+matrix. Prior model/Embassy evidence below belongs to 1.0.0 and is not relabeled as a new
+1.0.1 live-model run.
+
+## Prior live evidence (1.0.0)
 
 - Real `gpt-6-astra` inference over two independently enrolled peers using released SAM
-  `v0.1.0-alpha.9` and current main `1966b79e7c6864876fc34722e78a050f1c23938c`, selected through
+  `v0.1.0-alpha.9` and the then-current main `1966b79e7c6864876fc34722e78a050f1c23938c`, selected through
   the native `sam_mesh` provider and completed through the response tool with `break_loop`.
 - Three-peer Embassy acceptance: native ZIP installation and publication controls, real
   specialist message completion, verified caller/session binding, cross-peer and cross-service
@@ -66,12 +89,12 @@ by framework fixtures; universal live provider compatibility is not claimed. See
 
 ## Publication
 
-The [1.0.0 release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.0) contains
+The [1.0.1 release](https://github.com/TerminallyLazy/a0-sam-mesh/releases/tag/v1.0.1) contains
 the installable ZIP and verification assets. The root manifest, native plugin layout,
 README, MIT license and original logo are in the standalone repository.
 
 The [existing Plugin Index contribution](https://github.com/agent0ai/a0-plugins/pull/547)
 contains exactly `plugins/sam_mesh/index.yaml` and its square 8,108-byte thumbnail, using
 only supported fields and five recommended tags. The official submission validator passes.
-Index inclusion requires upstream maintainer review and merge; repository/release publication
-does not itself make the plugin appear in the index.
+The contribution was merged into the official index on 2026-09-14. The index points to
+the plugin repository, so this repair ships through the same native plugin update path.

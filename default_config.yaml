@@ -1,4 +1,5 @@
 schema: a0.sam.config/v1alpha1
+connection: managed
 transport:
   type: uds
   base_url: http://127.0.0.1:8080

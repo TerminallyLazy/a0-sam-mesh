@@ -6,12 +6,12 @@
   <link rel="stylesheet" href="/plugins/sam_mesh/webui/observatory.css">
 </head>
 <body>
-<div x-data>
+<div x-data class="sam-observatory-host">
 <template x-if="$store.samObservatory">
 <section class="sam-observatory" x-data="{ get s() { return $store.samObservatory; } }" x-init="s.onOpen()" x-destroy="s.cleanup()" x-effect="$store.chats?.selected; $store.tasks?.selected; s.scopeChanged()">
-  <header class="sam-header"><div><span class="sam-eyebrow">SAM MESH · COMMUNITY PREVIEW</span><h2>Mesh Observatory</h2>
-    <p>Capabilities and consent for this chat’s passport.</p></div>
-    <button type="button" class="button" @click="s.refresh()" :disabled="s.loading" aria-label="Refresh Observatory"><span class="material-symbols-outlined">refresh</span></button>
+  <header class="sam-header">
+    <div class="sam-brand"><img src="/plugins/sam_mesh/webui/thumbnail.webp" width="32" height="32" alt=""><div><h2>SAM Mesh</h2><span class="sam-subtitle" x-text="s.node.scope ? [s.node.scope.project_name || 'Global', s.node.scope.agent_profile || 'Default'].join(' / ') : 'Mesh Observatory'"></span></div></div>
+    <div class="sam-actions"><button type="button" class="button sam-icon-button" @click="s.openSettings()" aria-label="SAM Mesh connection settings"><x-icon name="settings"></x-icon></button><button type="button" class="button sam-icon-button" @click="s.refresh()" :disabled="s.loading" aria-label="Refresh Observatory"><x-icon name="refresh"></x-icon></button></div>
   </header>
   <nav class="sam-tabs" role="tablist" aria-label="Observatory views">
     <button type="button" role="tab" :aria-selected="s.view === 'Node'" @click="s.select('Node')">Node</button>
@@ -20,30 +20,46 @@
     <button type="button" role="tab" :aria-selected="s.view === 'Activity'" @click="s.select('Activity')">Activity</button>
     <button type="button" role="tab" :aria-selected="s.view === 'Embassy'" @click="s.select('Embassy')">Embassy</button>
   </nav>
-  <p x-show="s.loading" role="status">Refreshing observed facts…</p>
+  <p class="sam-refresh-status" x-show="s.loading" role="status">Checking connection…</p>
   <div x-show="s.node.stopped" class="sam-notice" role="status">Disconnected. New outbound dispatch is blocked for this project and profile. Previously admitted calls may finish.</div>
   <section x-show="s.view === 'Node'" aria-label="Node status">
-    <div class="sam-section-head"><h3>Connection</h3><span class="sam-chip" x-text="s.fact(s.node.status)"></span></div>
-    <dl class="sam-facts"><dt>Endpoint</dt><dd x-text="s.node.endpoint || 'Not configured'"></dd>
-      <dt>Transport</dt><dd x-text="s.node.transport || 'Not checked'"></dd>
-      <dt>Operating mode</dt><dd x-text="s.node.mode || 'Explorer'"></dd>
-      <dt>Node readiness</dt><dd x-text="s.node.ready ? 'Ready' : 'Not ready'"></dd>
-      <dt>Scope</dt><dd x-text="s.node.scope ? [s.node.scope.project_name || 'Global', s.node.scope.agent_profile || 'Default'].join(' / ') : 'Open a chat'"></dd></dl>
-    <button type="button" class="button" @click="s.planNative()" :disabled="s.loading">Inspect native MCP compatibility</button>
-    <pre class="sam-code" x-show="s.nativePlan" x-text="s.json(s.nativePlan)"></pre>
+    <div class="sam-connection" :class="{ 'sam-connected': s.node.ready }">
+      <div class="sam-connection-heading"><span class="sam-status-dot" :class="{ 'is-ready': s.node.ready, 'is-working': s.loading || ['installing', 'starting'].includes(s.node.setup?.status) }"></span><h3 x-text="s.connectionTitle"></h3></div>
+      <p x-text="s.connectionDetail"></p>
+      <button type="button" class="button" x-show="!s.node.ready && !['installing', 'starting'].includes(s.node.setup?.status)" @click="s.openSettings()">Connection settings</button>
+    </div>
+    <dl class="sam-facts"><dt>Connection</dt><dd x-text="s.node.connection === 'managed' ? 'Managed local mesh' : 'Existing SAM node'"></dd>
+      <dt>Endpoint</dt><dd><code x-text="s.node.endpoint || 'Automatic setup'"></code></dd>
+      <dt>Mode</dt><dd x-text="({explorer: 'Explorer', guarded_mesh: 'Guarded Mesh', embassy: 'Embassy', sovereign: 'Sovereign'})[s.node.mode] || 'Explorer'"></dd>
+      <dt>Remote calls</dt><dd x-text="s.node.features?.remote_calls ? 'Approval required' : 'Disabled'"></dd></dl>
+    <details class="sam-diagnostics"><summary>Connection details</summary>
+      <p class="sam-note" x-text="s.fact(s.node.status)"></p>
+      <p class="sam-note" x-show="s.node.connection_issue" x-text="(s.node.connection_issue || '').replaceAll('_', ' ')"></p>
+      <button type="button" class="button" @click="s.planNative()" :disabled="s.loading || !s.node.ready">Inspect native MCP compatibility</button>
+      <pre class="sam-code" x-show="s.nativePlan" x-text="s.json(s.nativePlan)"></pre>
+    </details>
     <div x-show="s.node.stopped"><p>Resume applies the current passport and requires fresh approvals.</p>
       <label>Type RESUME<input x-model="s.resumeAck" autocomplete="off"></label>
       <button type="button" class="button" @click="s.resume()" :disabled="s.loading || s.resumeAck !== 'RESUME'">Resume this scope</button>
     </div>
-    <p class="sam-note">Profile passports are policy overlays on the node identity. Explorer allows discovery; remote execution requires an explicit policy and approval.</p>
+    <p class="sam-note">Explorer lets the agent discover services. Enable remote calls in settings when you are ready; approvals stay scoped to this chat.</p>
   </section>
   <section x-show="s.view === 'Catalog'" aria-label="Discovered catalog">
     <div class="sam-section-head"><h3>Services</h3><span class="sam-chip" x-text="s.fact(s.catalog?.status)"></span></div>
     <label>Service type<select x-model="s.kind" @change="s.refresh()"><option value="mcp">MCP tools</option><option value="inference">Inference providers</option></select></label>
     <label>Service name<input type="search" x-model="s.query" @keydown.enter="s.refresh()" placeholder="Filter the service catalog"></label>
-    <p class="sam-note">Discovery is partial and remote descriptions are untrusted. Canonical mcp:// identifiers are preserved.</p>
-    <p x-show="!s.catalog">Refresh to discover services on the configured node.</p>
-    <pre class="sam-code" x-show="s.catalog" x-text="s.json(s.catalog?.data)"></pre>
+    <div class="sam-empty" x-show="s.catalog && !s.catalogEntries.length">
+      <h4>No services found</h4>
+      <p x-text="s.query ? 'No matching service is currently visible. Try another name or clear the filter.' : 'Your mesh is connected. Services appear here when a peer advertises MCP tools or an inference provider.'"></p>
+    </div>
+    <p class="sam-note" x-show="!s.catalog">Checking the service catalog…</p>
+    <div class="sam-catalog"><template x-for="(entry, index) in s.catalogEntries" :key="index"><article class="sam-card">
+      <h4 x-text="entry.srv_name || 'Unnamed service'"></h4>
+      <p x-show="entry.srv_description" x-text="entry.srv_description"></p>
+      <dl class="sam-facts"><dt>Peer</dt><dd><code x-text="entry.peer_id || 'Unavailable'"></code></dd></dl>
+      <details><summary>Service details</summary><pre class="sam-code" x-text="s.json(entry)"></pre></details>
+    </article></template></div>
+    <p class="sam-note" x-show="s.catalogEntries.length">These are the services currently visible to your node. Remote descriptions are untrusted; review the destination before approving a call.</p>
   </section>
   <section x-show="s.view === 'Routes'" aria-label="Routes and preflight">
     <h3>Destination and data</h3><p>Automatic inference may fail over between eligible providers. Named routes disclose one peer and service. Required labels use any-of matching.</p>

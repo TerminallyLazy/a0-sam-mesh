@@ -93,6 +93,7 @@ class InferenceSidecar(FakeSamSidecar):
 async def check_native():
     async with InferenceSidecar() as sidecar:
         raw = yaml.safe_load((plugin / 'default_config.yaml').read_text())
+        raw['connection'] = 'external'
         raw['transport'].update(type='http', base_url=sidecar.base_url, socket_path='')
         raw['passport']['mode'] = 'guarded_mesh'
         raw['passport']['inference']['enabled'] = True

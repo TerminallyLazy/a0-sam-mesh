@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from enum import Enum
 
-from .config import _resolve_scope, resolve_config
+from .config import _load_plugin_config, _resolve_scope, resolve_config, validate_storage_config
 from .control import approve_decision, resume_scope, review_decision, stop_scope
 from .decisions import DecisionError
 from .domain import DataClass
@@ -128,25 +128,41 @@ async def dispatch_control(agent, action, data):
         from .sovereign import guest_probe
 
         return await asyncio.to_thread(guest_probe)
+    if action == "status":
+        local = {"scope": plain(scope), "stopped": stores[0].disabled(scope), "ready": False}
+        token = None
+        try:
+            raw = validate_storage_config(_load_plugin_config("sam_mesh", agent=agent))
+            local.update(mode=raw["passport"]["mode"], connection=raw.get("connection", "external"))
+            if raw.get("connection") == "managed" and raw["passport"]["mode"] != "sovereign":
+                from usr.plugins.sam_mesh.hooks import ensure_runtime
+
+                setup = ensure_runtime(raw)
+                local["setup"] = setup
+                if setup["status"] != "ready":
+                    local.update(
+                        status="setup_required",
+                        connection_issue=setup.get("error_code", setup["status"]),
+                    )
+                    return local
+            config = resolve_config(agent, raw=raw)
+            token = config.transport.token
+            local.update(
+                endpoint=config.transport.socket_path
+                if config.transport.type == "uds"
+                else config.transport.base_url,
+                transport=config.transport.type,
+                features=plain(config.features),
+            )
+            async with asyncio.timeout(2):
+                local.update(await dispatch(agent, "sam_mesh_status", {}))
+            return safe_output(local, token=config.transport.token)
+        except Exception:
+            local.update(status="unreachable", connection_issue="connection_unavailable")
+            return safe_output(local, token=token)
     config = resolve_config(agent)
     if action == "resume":
         return resume_scope(scope, stores, data.get("acknowledgment"))
-    if action == "status":
-        local = {
-            "scope": plain(scope),
-            "mode": config.passport.mode.value,
-            "features": plain(config.features),
-            "stopped": stores[0].disabled(scope),
-            "endpoint": config.transport.base_url,
-            "transport": config.transport.type,
-            "annotation_provenance": "unavailable",
-        }
-        try:
-            async with asyncio.timeout(1.8):
-                local.update(await dispatch(agent, "sam_mesh_status", {}))
-        except Exception:
-            local.update(status="unreachable", ready=False)
-        return safe_output(local, token=config.transport.token)
     if action == "catalog":
         kind = data.get("kind", "mcp")
         if kind not in {"mcp", "inference"}:

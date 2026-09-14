@@ -1,7 +1,7 @@
 name: sam_mesh
 title: SAM Mesh
 description: Governed SAM discovery, approved tools, native inference, Embassy specialists, and certified Sovereign deployment for Agent Zero.
-version: 1.0.0
+version: 1.0.1
 settings_sections:
   - mcp
   - external

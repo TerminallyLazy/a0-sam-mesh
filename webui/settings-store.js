@@ -7,6 +7,7 @@ import { toastFrontendError } from "/components/notifications/notification-store
 export const store = createStore("samSettings", {
   modeChanged(config) {
     if (config.passport.mode === "sovereign") {
+      config.connection = "external";
       Object.assign(config.transport, {
         type: "http", base_url: "http://mesh.sam.alt", socket_path: "",
         token_secret_name: "", token_file: "", allowed_origins: ["http://mesh.sam.alt"],

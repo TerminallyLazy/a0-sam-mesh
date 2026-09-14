@@ -10,7 +10,7 @@ export const store = createStore("samObservatory", {
   model: "", service: "", message: "", inference: null, inferenceResult: null,
   embassyName: "", embassyProject: "", embassyProfile: "", publication: null, deployment: null,
   embassyRuntime: null, publicationAck: false,
-  nativePlan: null,
+  nativePlan: null, opened: false, refreshPending: false, setupTimer: null,
   async api(name, data = {}) {
     const context = globalThis.getContext?.() || "";
     if (!context) throw new Error("Open a chat to inspect its SAM passport.");
@@ -40,16 +40,28 @@ export const store = createStore("samObservatory", {
     this.loading = true; this.error = "";
     try { await action(); }
     catch (error) { if (!error.stale) { this.error = error.message || "SAM is unavailable."; toastFrontendError(this.error, "SAM Mesh"); } }
-    finally { this.loading = false; }
+    finally {
+      this.loading = false;
+      if (this.refreshPending && this.opened) {
+        this.refreshPending = false;
+        queueMicrotask(() => this.refresh());
+      }
+    }
   },
   scopeChanged() {
     const current = globalThis.getContext?.() || "";
-    if (this.contextId && this.contextId !== current) this.clear();
+    if (this.contextId === current) return;
+    this.clear();
     this.contextId = current;
+    if (this.opened && current) {
+      if (this.loading) this.refreshPending = true;
+      else queueMicrotask(() => this.refresh());
+    }
   },
-  async onOpen() { await this.refresh(); },
-  cleanup() { this.clear(); },
+  async onOpen() { this.opened = true; await this.refresh(); },
+  cleanup() { clearTimeout(this.setupTimer); this.setupTimer = null; this.opened = false; this.refreshPending = false; this.clear(); },
   async refresh() {
+    if (!globalThis.getContext?.()) return;
     await this.run(async () => {
       if (this.view === "Catalog") this.catalog = await this.api("catalog", { query: this.query, kind: this.kind });
       else if (this.view === "Activity") this.events = (await this.api("audit")).events || [];
@@ -61,9 +73,24 @@ export const store = createStore("samObservatory", {
         this.embassyProfile = this.node.scope?.agent_profile || "";
       }
       else this.node = await this.api("status");
+      clearTimeout(this.setupTimer);
+      if (this.opened && ["installing", "starting"].includes(this.node.setup?.status)) {
+        this.setupTimer = setTimeout(() => this.refresh(), 2000);
+      }
     });
   },
-  async select(view) { this.view = view; await this.refresh(); },
+  async select(view) {
+    this.view = view;
+    if (this.loading) this.refreshPending = true;
+    else await this.refresh();
+  },
+  get catalogEntries() { return Array.isArray(this.catalog?.data) ? this.catalog.data.filter(entry => entry && typeof entry === "object" && !Array.isArray(entry)) : []; },
+  async openSettings() {
+    try {
+      const { store } = await import("/components/plugins/plugin-settings-store.js");
+      await store.openConfig("sam_mesh", this.node.scope?.project_name || "", this.node.scope?.agent_profile || "");
+    } catch (error) { toastFrontendError("Open SAM Mesh settings from Plugins.", "SAM Mesh"); }
+  },
   async inspect() {
     await this.run(async () => {
       this.review = await this.api("review", { decision_id: this.decisionId.trim() });
@@ -163,8 +190,25 @@ export const store = createStore("samObservatory", {
       link.click(); URL.revokeObjectURL(url);
     });
   },
+  get connectionTitle() {
+    if (!this.contextId) return "Choose a chat";
+    if (this.node.ready) return this.node.connection === "managed" ? "Local mesh is ready" : "Connected to your mesh";
+    if (this.node.setup?.status === "installing") return "Installing SAM";
+    if (this.node.setup?.status === "starting") return "Starting your local mesh";
+    if (this.node.setup?.status === "failed") return "Local mesh needs attention";
+    if (this.loading && !this.node.status) return "Checking your connection";
+    return "Connect your mesh";
+  },
+  get connectionDetail() {
+    if (!this.contextId) return "Select a chat to view its connection, services, and approvals.";
+    if (this.node.ready) return this.node.connection === "managed" ? "Your private node is running in Agent Zero. Add or connect services to make them available here." : "The configured SAM node answered the authenticated probe.";
+    if (this.node.setup?.status === "installing") return "Downloading and verifying the published SAM binaries. This happens automatically.";
+    if (this.node.setup?.status === "starting") return "Creating the private local mesh and connecting your node. Your identity is preserved on restart.";
+    if (this.node.setup?.status === "failed") return "Automatic setup could not finish. Save Local mesh in connection settings to retry.";
+    return "Choose Local mesh in settings to create a node automatically, or enter an existing node connection.";
+  },
   fact(value) {
-    return ({ verified_now: "Verified now", cached: "Cached", partial: "Partial discovery",
+    return ({ setup_required: "Setup", verified_now: "Verified now", cached: "Cached", partial: "Partial discovery",
       unreachable: "Unreachable", schema_changed: "Schema changed", unsupported: "Unsupported" })[value] || "Not checked";
   },
   json(value) { return JSON.stringify(value, null, 2); },

@@ -628,3 +628,56 @@ class SamTransportFixRound2Tests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PublishedHealthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_published_plain_ok_health_is_supported_only_for_health_routes(self):
+        from helpers.mcp_transport import SamSchemaError
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            for path in ("/healthz", "/readyz", "/v1/models"):
+                sidecar.override(
+                    path,
+                    FakeResponse(status=200, body=b"OK", content_type="text/plain; charset=utf-8"),
+                )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                self.assertTrue((await client.health()).ready)
+                self.assertTrue((await client.readiness()).ready)
+                with self.assertRaises(SamSchemaError):
+                    await client.list_models()
+
+    async def test_arbitrary_health_text_and_http_failures_are_not_success(self):
+        from helpers.mcp_transport import SamNodeNotReady, SamSchemaError
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            sidecar.override(
+                "/healthz", FakeResponse(status=200, body=b"not OK", content_type="text/plain")
+            )
+            sidecar.override(
+                "/readyz", FakeResponse(status=503, body=b"OK", content_type="text/plain")
+            )
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                with self.assertRaises(SamSchemaError):
+                    await client.health()
+                with self.assertRaises(SamNodeNotReady):
+                    await client.readiness()
+
+
+class FreshNativeSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fresh_native_discovery_initializes_before_list_and_call(self):
+        from helpers.sam_client import SamClient
+
+        async with FakeSamSidecar() as sidecar:
+            async with SamClient(http_config(sidecar, token=None)) as client:
+                await client.list_tools()
+                await client.call_mcp_tool("get_mesh_info", {})
+                await client.list_tools()
+            methods = [
+                r["json"]["method"]
+                for r in sidecar.received
+                if isinstance(r.get("json"), dict) and "method" in r["json"]
+            ]
+        self.assertEqual(methods[:3], ["initialize", "notifications/initialized", "tools/list"])
+        self.assertEqual(methods.count("initialize"), 1)

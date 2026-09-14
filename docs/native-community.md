@@ -9,13 +9,14 @@ checks and live mesh acceptance have separate receipts; see [release readiness](
 
 The ZIP installs through `_plugin_installer.helpers.install.install_from_zip` as
 an ordinary copy at `/a0/usr/plugins/sam_mesh`. No core patch, persistent symlink,
-custom server, dependency installation, or import-path modification is required.
+custom WebUI server or import-path modification is required. The install hook downloads
+and verifies the pinned SAM binaries for managed local connections.
 The test runtime uses a fresh, copied framework and disposable user state.
 
 [The machine-readable report](native-community-verification.json) records passing
 checks against actual framework discovery, installation, APIs and removal:
 
-- Native plugin-list metadata, Open screen, settings, README and Execute discovery.
+- Native plugin-list metadata, Open screen, settings, README and absence of a manual Execute action.
 - Root MIT license discovery and exact license text returned by the protected document API.
 - Global, profile, project, and project/profile settings with inherited fallback.
 - Save hooks reject raw-token fields without overwriting the previous configuration.
@@ -44,9 +45,11 @@ Browser verification used the real host `plugin-settings.html`, prototype store,
 component loader, Alpine lifecycle directives, notifications, API routes and an
 installed plugin copy. Saving a loopback endpoint, reopening the settings,
 opening Observatory, and clearing unsent arguments after closing/reopening all
-passed. The wrapper selected a disposable chat; WebSocket transport and the full
-chat boot sequence were outside this browser check. No SAM socket was present,
-so the node probe correctly remained unavailable.
+passed. The original 1.0.0 UI check used a disposable chat and did not cover delayed chat restoration.
+The 1.0.1 repair adds restored-chat refresh coverage and full-canvas visual verification.
+The published SAM health endpoints return literal text `OK`; those process probes are
+accepted only on their exact routes. Ready connection status additionally requires
+successful authenticated model-catalog access.
 
 ## Storage prerequisite
 

@@ -262,6 +262,7 @@ class McpStreamableSession:
         self._session_id: str | None = None
         self._protocol_version: str | None = None
         self._next_id = 1
+        self._initialize_lock = asyncio.Lock()
         transport = (
             PinnedUnixTransport(config.socket_path)
             if config.type == "uds"
@@ -380,7 +381,16 @@ class McpStreamableSession:
             raise SamSchemaError("SAM returned an empty response")
 
         media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        if media_type == "application/json":
+        if (
+            method == "GET"
+            and path in {"/healthz", "/readyz"}
+            and media_type == "text/plain"
+            and body == b"OK"
+        ):
+            # Published SAM alpha.9 exposes process probes as literal text.
+            # This does not attest mesh membership or authenticated catalog access.
+            values = [{"status": "ready" if path == "/readyz" else "ok", "probe_scope": "process"}]
+        elif media_type == "application/json":
             values = [_decode_json_bytes(body)]
         elif media_type == "text/event-stream":
             values = _decode_sse_bytes(body)
@@ -422,7 +432,7 @@ class McpStreamableSession:
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "a0-sam-mesh", "version": "1.0.0"},
+                "clientInfo": {"name": "a0-sam-mesh", "version": "1.0.1"},
             },
             include_session=False,
         )
@@ -554,6 +564,10 @@ class McpStreamableSession:
         *,
         include_session: bool = True,
     ) -> dict[str, Any]:
+        if include_session and method != "initialize" and self._session_id is None:
+            async with self._initialize_lock:
+                if self._session_id is None:
+                    await self.initialize()
         result, _ = await self._request(
             method,
             params,

@@ -118,3 +118,34 @@ test("Sovereign selection removes node authority and chooses only the boundary",
   assert.deepEqual(config.transport, { type: "http", base_url: "http://mesh.sam.alt",
     socket_path: "", token_file: "", token_secret_name: "", allowed_origins: ["http://mesh.sam.alt"] });
 });
+
+test("opening before chat restoration waits and then loads the restored scope", async () => {
+  const calls = [];
+  const f = fixture(async (path, data) => { calls.push(data.context_id); return { status: "setup_required", connection_issue: "socket_missing" }; });
+  f.switchChat("");
+  await f.store.onOpen();
+  assert.deepEqual(f.errors, []);
+  assert.deepEqual(calls, []);
+  f.switchChat("restored-chat");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ["restored-chat"]);
+  assert.equal(f.store.node.connection_issue, "socket_missing");
+});
+
+test("a chat switch during loading automatically refreshes the new scope", async () => {
+  let respond;
+  const calls = [];
+  const f = fixture(async (_path, data) => {
+    calls.push(data.context_id);
+    if (data.context_id === "chat-a") return new Promise(resolve => { respond = resolve; });
+    return { endpoint: "new-scope" };
+  });
+  const pending = f.store.onOpen();
+  f.switchChat("chat-b");
+  respond({ endpoint: "old-scope" });
+  await pending;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ["chat-a", "chat-b"]);
+  assert.equal(f.store.node.endpoint, "new-scope");
+  assert.deepEqual(f.errors, []);
+});

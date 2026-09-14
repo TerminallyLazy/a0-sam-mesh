@@ -3,9 +3,11 @@
 ## Starting safely
 
 Install into the intended Agent Zero framework and enable the plugin only for the desired
-scope. Confirm Node, endpoint and passport before using Catalog. Use explicit Docker addresses;
-never infer a running node from a source checkout. `execute.py --help` lists local diagnostics.
-No diagnostic performs enrollment or writes a node configuration.
+scope. Local mesh setup runs through `hooks.py` on install and when saved in settings;
+there is no Execute action. Observe installation, startup and authenticated status in the
+Observatory. Existing-node connections remain available in settings. Managed identities are
+retained at `/a0/usr/sam_mesh/managed` across stop, update and uninstall. Loopback listeners
+are private to the Agent Zero runtime; the plugin does not advertise services automatically.
 
 Keep Explorer until the catalog and exact schemas are understood. Use the protected form for
 non-public payloads. Approval records are temporary; keep the redacted audit as evidence, not
