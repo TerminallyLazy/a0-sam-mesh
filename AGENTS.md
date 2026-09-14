@@ -23,6 +23,7 @@
 - `helpers/inference.py` owns native HTTP-client lifetime and durable call admission; `inference_gate.py` owns protected named-route payloads and one-shot approvals.
 - `helpers/embassy_sessions.py` owns origin-bound native ephemeral sessions; `embassy_runtime.py` owns broker lifetime and scope revocation; `embassy_origin.py` and `embassy_gateway.py` own the signed final-hop boundary. Embassy v1 permits only the response tool. Operator-applied static registration is separate from broker health.
 - `webui/` and `extensions/` own native Agent Zero UI surfaces and lifecycle integration. `main.html` is the plugin-list entry; settings inherit the host prototype’s `config` and `context`. Protected Observatory state is cleared on component destruction.
+- Catalog service choices come from an unfiltered discovery snapshot; service selection and text filtering are local. Clear choices on scope/type changes and reject superseded discovery responses. Failed discovery must remain distinct from a successful empty catalog.
 - `deploy/` owns the optional Sovereign deployment pack, TCP-only boundary, isolated UI gateway, runtime certification and rollback. `helpers/sovereign.py` validates operator receipts and observed guest confinement.
 - `tests/` owns unit, contract, integration, adversarial, and release-gate evidence.
 - `docs/` owns approved contracts, compatibility evidence, security guidance, and runbooks. `docs/release-readiness.md` records release gates; `docs/verification.md` records reproducible checks.

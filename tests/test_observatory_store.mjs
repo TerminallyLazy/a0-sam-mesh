@@ -13,6 +13,85 @@ function fixture(api) {
     ((_name, value) => value, api, (error) => errors.push(error));
   return { store, errors, switchChat: value => { context = value; store.scopeChanged(); } };
 }
+test("catalog discovers choices without requiring a service name", async () => {
+  const calls = [];
+  const f = fixture(async (path, data) => {
+    calls.push({ path, data });
+    return { status: "partial", data: [
+      { srv_name: "zebra", peer_id: "peer-a" },
+      { srv_name: "research", peer_id: "peer-b", srv_description: "Document analysis" },
+      { srv_name: "research", peer_id: "peer-c" }, null, "invalid",
+    ] };
+  });
+  f.store.query = "analysis";
+  await f.store.select("Catalog");
+  assert.equal(calls[0].data.query, "");
+  assert.deepEqual(f.store.serviceChoices, ["research", "zebra"]);
+  assert.equal(f.store.catalogEntries.length, 1);
+  f.store.query = "";
+  f.store.selectedService = "research";
+  assert.deepEqual(f.store.catalogEntries.map(entry => entry.peer_id), ["peer-b", "peer-c"]);
+  assert.equal(calls.length, 1, "filtering uses the discovered snapshot");
+});
+
+test("service type changes clear filters and discard the previous type's late catalog", async () => {
+  let resolveMcp;
+  const calls = [];
+  const f = fixture(async (_path, data) => {
+    calls.push(data.kind);
+    if (data.kind === "mcp") return new Promise(resolve => { resolveMcp = resolve; });
+    return { data: [{ srv_name: "inference-provider" }] };
+  });
+  f.store.view = "Catalog";
+  f.store.opened = true;
+  const pending = f.store.refresh();
+  f.store.query = "old-filter";
+  f.store.selectedService = "old-service";
+  f.store.kind = "inference";
+  await f.store.changeCatalogKind();
+  assert.equal(f.store.query, "");
+  assert.equal(f.store.selectedService, "");
+  assert.equal(f.store.catalog, null);
+  resolveMcp({ data: [{ srv_name: "old-service" }] });
+  await pending;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ["mcp", "inference"]);
+  assert.deepEqual(f.store.serviceChoices, ["inference-provider"]);
+});
+
+test("refresh removes vanished service selections and errors never masquerade as an empty mesh", async () => {
+  let fail = false;
+  const f = fixture(async () => {
+    if (fail) throw new Error("Node unreachable");
+    return { data: [{ srv_name: "new-service" }] };
+  });
+  f.store.view = "Catalog";
+  f.store.selectedService = "vanished-service";
+  await f.store.refresh();
+  assert.equal(f.store.selectedService, "");
+  fail = true;
+  await f.store.refresh();
+  assert.equal(f.store.catalog, null);
+  assert.equal(f.store.catalogError, "Node unreachable");
+  assert.deepEqual(f.store.serviceChoices, []);
+});
+
+test("scope changes clear discovered choices, destinations and catalog filters", () => {
+  const f = fixture(async () => ({}));
+  f.store.catalog = { data: [{ srv_name: "private-service" }] };
+  f.store.query = "private";
+  f.store.selectedService = "private-service";
+  f.store.catalogError = "old-scope";
+  f.store.peer = "old-peer";
+  f.store.service = "old-service";
+  f.store.tool = "old-tool";
+  f.store.model = "old-model";
+  f.switchChat("chat-b");
+  assert.deepEqual(f.store.serviceChoices, []);
+  for (const name of ["query", "selectedService", "catalogError", "peer", "service", "tool", "model"]) {
+    assert.equal(f.store[name], "", name);
+  }
+});
 test("an in-flight refresh cannot overwrite emergency stop", async () => {
   let resolveStatus;
   const f = fixture(async (path) => path.endsWith("/status")

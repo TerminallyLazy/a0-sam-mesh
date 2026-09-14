@@ -47,6 +47,11 @@ installed plugin copy. Saving a loopback endpoint, reopening the settings,
 opening Observatory, and clearing unsent arguments after closing/reopening all
 passed. The original 1.0.0 UI check used a disposable chat and did not cover delayed chat restoration.
 The 1.0.1 repair adds restored-chat refresh coverage and full-canvas visual verification.
+Catalog now fills a native service selector from discovery, keeps every peer for a selected
+name, and filters the snapshot immediately. Browser checks cover the actual empty local mesh
+and an isolated populated UI fixture, including selection, search, clearing filters and a
+330-pixel panel. Unit coverage rejects late catalog results after type or scope changes;
+discovery errors are displayed separately from successful empty results.
 The published SAM health endpoints return literal text `OK`; those process probes are
 accepted only on their exact routes. Ready connection status additionally requires
 successful authenticated model-catalog access.

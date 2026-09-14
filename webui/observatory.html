@@ -20,7 +20,7 @@
     <button type="button" role="tab" :aria-selected="s.view === 'Activity'" @click="s.select('Activity')">Activity</button>
     <button type="button" role="tab" :aria-selected="s.view === 'Embassy'" @click="s.select('Embassy')">Embassy</button>
   </nav>
-  <p class="sam-refresh-status" x-show="s.loading" role="status">Checking connection…</p>
+  <p class="sam-refresh-status" x-show="s.loading" role="status" x-text="s.view === 'Catalog' ? 'Discovering services…' : 'Checking connection…'"></p>
   <div x-show="s.node.stopped" class="sam-notice" role="status">Disconnected. New outbound dispatch is blocked for this project and profile. Previously admitted calls may finish.</div>
   <section x-show="s.view === 'Node'" aria-label="Node status">
     <div class="sam-connection" :class="{ 'sam-connected': s.node.ready }">
@@ -46,20 +46,34 @@
   </section>
   <section x-show="s.view === 'Catalog'" aria-label="Discovered catalog">
     <div class="sam-section-head"><h3>Services</h3><span class="sam-chip" x-text="s.fact(s.catalog?.status)"></span></div>
-    <label>Service type<select x-model="s.kind" @change="s.refresh()"><option value="mcp">MCP tools</option><option value="inference">Inference providers</option></select></label>
-    <label>Service name<input type="search" x-model="s.query" @keydown.enter="s.refresh()" placeholder="Filter the service catalog"></label>
-    <div class="sam-empty" x-show="s.catalog && !s.catalogEntries.length">
-      <h4>No services found</h4>
-      <p x-text="s.query ? 'No matching service is currently visible. Try another name or clear the filter.' : 'Your mesh is connected. Services appear here when a peer advertises MCP tools or an inference provider.'"></p>
+    <p class="sam-note">Choose a service discovered on your mesh. Refresh to check for new services.</p>
+    <label>Service type<select x-model="s.kind" @change="s.changeCatalogKind()"><option value="mcp">MCP tools</option><option value="inference">Inference providers</option></select></label>
+    <label>Discovered service<select x-model="s.selectedService" :disabled="s.loading || !s.serviceChoices.length">
+      <option value="" x-text="s.serviceChoices.length ? 'All discovered services' : (s.loading ? 'Discovering services…' : (s.catalog ? 'No services available yet' : 'Services unavailable'))"></option>
+      <template x-for="name in s.serviceChoices" :key="name"><option :value="name" x-text="name"></option></template>
+    </select></label>
+    <label x-show="s.discoveredEntries.length">Filter results<input type="search" x-model="s.query" placeholder="Search names, descriptions or peers" autocomplete="off"></label>
+    <div class="sam-section-head" x-show="s.discoveredEntries.length">
+      <span class="sam-note" role="status" x-text="s.catalogEntries.length + ' of ' + s.discoveredEntries.length + ' discovered providers'"></span>
+      <button type="button" class="button" x-show="s.query || s.selectedService" @click="s.clearCatalogFilters()">Clear filters</button>
     </div>
-    <p class="sam-note" x-show="!s.catalog">Checking the service catalog…</p>
+    <div class="sam-empty" x-show="s.catalog && !s.discoveredEntries.length">
+      <h4 x-text="s.kind === 'mcp' ? 'No MCP services advertised yet' : 'No inference providers advertised yet'"></h4>
+      <p>Your node has no visible services of this type. Connect to a mesh with advertised services, or publish a service to make it available here.</p>
+      <button type="button" class="button" @click="s.openSettings()">Connection settings</button>
+    </div>
+    <div class="sam-empty" x-show="s.discoveredEntries.length && !s.catalogEntries.length">
+      <h4>No matching services</h4><p>Clear the filters to see the discovered services.</p>
+    </div>
+    <div class="sam-error" x-show="s.catalogError" role="alert"><strong>Could not load services</strong><p x-text="s.catalogError"></p><button type="button" class="button" @click="s.refresh()" :disabled="s.loading">Try again</button></div>
+    <p class="sam-note" x-show="!s.contextId">Open a chat to discover services for its project and profile.</p>
     <div class="sam-catalog"><template x-for="(entry, index) in s.catalogEntries" :key="index"><article class="sam-card">
       <h4 x-text="entry.srv_name || 'Unnamed service'"></h4>
       <p x-show="entry.srv_description" x-text="entry.srv_description"></p>
       <dl class="sam-facts"><dt>Peer</dt><dd><code x-text="entry.peer_id || 'Unavailable'"></code></dd></dl>
       <details><summary>Service details</summary><pre class="sam-code" x-text="s.json(entry)"></pre></details>
     </article></template></div>
-    <p class="sam-note" x-show="s.catalogEntries.length">These are the services currently visible to your node. Remote descriptions are untrusted; review the destination before approving a call.</p>
+    <p class="sam-note" x-show="s.catalogEntries.length">Showing up to 50 service advertisements visible to your node. A service may have several peers. Review the destination before approving a call.</p>
   </section>
   <section x-show="s.view === 'Routes'" aria-label="Routes and preflight">
     <h3>Destination and data</h3><p>Automatic inference may fail over between eligible providers. Named routes disclose one peer and service. Required labels use any-of matching.</p>

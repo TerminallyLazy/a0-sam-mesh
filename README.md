@@ -48,6 +48,10 @@ The node and mesh listen only on loopback; no remote services or model calls are
    Existing saved connections are preserved when updating from 1.0.0.
 5. Start with Node and Catalog. A new private mesh has no remote services or model providers
    until you connect or publish them. An empty catalog is shown explicitly; it is not a failed connection.
+   Catalog fills **Discovered service** automatically from the selected service type. Choose a
+   service or keep **All discovered services**, then use **Filter results** to narrow names,
+   descriptions or peers instantly. **Clear filters** restores the discovered list; Refresh
+   requests a new snapshot (up to 50 advertisements). You do not need to know a service name first.
 
 Managed setup supports Linux arm64 and x86_64, including ordinary Agent Zero Docker containers.
 It does not enable Sovereign confinement. Private mesh/node identities and verified binaries live

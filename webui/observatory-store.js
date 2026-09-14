@@ -6,6 +6,7 @@ export const store = createStore("samObservatory", {
   view: "Node", node: {}, catalog: null, events: [], review: null,
   loading: false, error: "", contextId: "", decisionId: "", acknowledgment: "",
   peer: "", tool: "", payload: "{}", dataClass: "public", query: "",
+  selectedService: "", catalogError: "", catalogGeneration: 0,
   stopping: false, stopConfirm: false, generation: 0, resumeAck: "", kind: "mcp",
   model: "", service: "", message: "", inference: null, inferenceResult: null,
   embassyName: "", embassyProject: "", embassyProfile: "", publication: null, deployment: null,
@@ -28,6 +29,8 @@ export const store = createStore("samObservatory", {
   clear() {
     this.generation++;
     this.node = {}; this.catalog = null; this.events = []; this.review = null;
+    this.catalogGeneration++; this.query = ""; this.selectedService = ""; this.catalogError = "";
+    this.peer = ""; this.service = ""; this.tool = ""; this.model = "";
     this.decisionId = ""; this.acknowledgment = ""; this.payload = "{}";
     this.stopConfirm = false;
     this.inference = null; this.inferenceResult = null; this.message = "";
@@ -63,7 +66,7 @@ export const store = createStore("samObservatory", {
   async refresh() {
     if (!globalThis.getContext?.()) return;
     await this.run(async () => {
-      if (this.view === "Catalog") this.catalog = await this.api("catalog", { query: this.query, kind: this.kind });
+      if (this.view === "Catalog") await this.loadCatalog();
       else if (this.view === "Activity") this.events = (await this.api("audit")).events || [];
       else if (this.view === "Embassy") {
         this.deployment = await this.api("deployment_status");
@@ -84,7 +87,38 @@ export const store = createStore("samObservatory", {
     if (this.loading) this.refreshPending = true;
     else await this.refresh();
   },
-  get catalogEntries() { return Array.isArray(this.catalog?.data) ? this.catalog.data.filter(entry => entry && typeof entry === "object" && !Array.isArray(entry)) : []; },
+  async loadCatalog() {
+    const generation = this.catalogGeneration;
+    this.catalogError = "";
+    try {
+      // Discover first; the picker and text filter operate on this same snapshot.
+      const catalog = await this.api("catalog", { query: "", kind: this.kind });
+      if (generation !== this.catalogGeneration) return;
+      this.catalog = catalog;
+      if (!this.serviceChoices.includes(this.selectedService)) this.selectedService = "";
+    } catch (error) {
+      if (error.stale || generation !== this.catalogGeneration) return;
+      this.catalog = null;
+      this.catalogError = error.message || "Could not load services.";
+      throw error;
+    }
+  },
+  async changeCatalogKind() {
+    this.catalogGeneration++; this.catalog = null; this.catalogError = "";
+    this.clearCatalogFilters();
+    if (this.loading) this.refreshPending = true;
+    else await this.refresh();
+  },
+  clearCatalogFilters() { this.query = ""; this.selectedService = ""; },
+  get discoveredEntries() { return Array.isArray(this.catalog?.data) ? this.catalog.data.filter(entry => entry && typeof entry === "object" && !Array.isArray(entry)) : []; },
+  get serviceChoices() {
+    return [...new Set(this.discoveredEntries.map(entry => entry.srv_name).filter(name => typeof name === "string" && name.length))].sort((a, b) => a.localeCompare(b));
+  },
+  get catalogEntries() {
+    const query = this.query.trim().toLocaleLowerCase();
+    return this.discoveredEntries.filter(entry => (!this.selectedService || entry.srv_name === this.selectedService)
+      && (!query || [entry.srv_name, entry.srv_description, entry.peer_id].some(value => typeof value === "string" && value.toLocaleLowerCase().includes(query))));
+  },
   async openSettings() {
     try {
       const { store } = await import("/components/plugins/plugin-settings-store.js");
