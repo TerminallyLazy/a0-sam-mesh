@@ -7,7 +7,7 @@ def get_plugin_config(default=None, **kwargs):
     return validate_storage_config(default)
 
 
-def ensure_runtime(settings=None, **kwargs):
+def ensure_runtime(settings=None, retry=False, **kwargs):
     from usr.plugins.sam_mesh.helpers.managed_node import manager
 
     from helpers import plugins
@@ -20,7 +20,7 @@ def ensure_runtime(settings=None, **kwargs):
         or settings["passport"]["mode"] == "sovereign"
     ):
         return {"status": "external"}
-    return manager().ensure()
+    return manager().ensure(retry=retry)
 
 
 def managed_transport():
@@ -31,12 +31,12 @@ def managed_transport():
 
 def save_plugin_config(settings=None, **kwargs):
     normalized = validate_storage_config(settings)
-    ensure_runtime(normalized)
+    ensure_runtime(normalized, retry=True)
     return normalized
 
 
 def install(**kwargs):
-    return ensure_runtime()
+    return ensure_runtime(retry=True)
 
 
 def stop_runtime(**kwargs):

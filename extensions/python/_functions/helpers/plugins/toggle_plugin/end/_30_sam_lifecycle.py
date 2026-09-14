@@ -16,4 +16,4 @@ class SamLifecycle(Extension):
             and not profile
             and data.get("exception") is None
         ):
-            call_plugin_hook("sam_mesh", "ensure_runtime")
+            call_plugin_hook("sam_mesh", "ensure_runtime", retry=True)

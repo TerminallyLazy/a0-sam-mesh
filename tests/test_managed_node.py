@@ -24,6 +24,13 @@ class ManagedNodeTests(unittest.TestCase):
             owner.thread.join(5)
             self.assertEqual(owner.status()["error_code"], "download_checksum_failed")
             self.assertFalse(list(owner.root.rglob("sam-node")))
+            previous = owner.thread
+            self.assertEqual(owner.ensure()["status"], "failed")
+            self.assertIs(owner.thread, previous)
+            owner.ensure(retry=True)
+            owner.thread.join(5)
+            self.assertIsNot(owner.thread, previous)
+            self.assertEqual(owner.status()["error_code"], "download_checksum_failed")
 
     def test_unsafe_runtime_root_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -54,7 +54,7 @@ It does not enable Sovereign confinement. Private mesh/node identities and verif
 under `/a0/usr/sam_mesh/managed`, outside the installed code directory. Native disable, pre-update,
 and uninstall hooks stop owned processes; identity is retained for reinstallation. Startup and
 native use recover the managed node after an Agent Zero restart. Setup failures can be retried by
-saving Local mesh in settings. The process and archive locks prevent duplicate supervisors.
+saving Local mesh in settings. One runtime lock prevents duplicate supervisors and simultaneous binary installs.
 
 For UDS, mount the SAM socket directory into the Agent Zero container, set `socket_path`
 and keep a valid HTTP base URL as the local HTTP authority. No token is sent over UDS.

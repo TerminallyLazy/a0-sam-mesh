@@ -147,11 +147,14 @@ class ManagedNode:
             json.dumps({"status": status, "version": VERSION, **data}).encode(),
         )
 
-    def ensure(self):
+    def ensure(self, *, retry=False):
         with self.guard:
             _private_dir(self.root)
             if self.thread and self.thread.is_alive():
                 return self.status()
+            status = self.status()
+            if status.get("status") == "failed" and not retry:
+                return status
             fd = os.open(self.root / "runtime.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
             info = os.fstat(fd)
             if (
